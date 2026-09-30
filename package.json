@@ -1,0 +1,26 @@
+{
+  "name": "openinstinct",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build:core": "tsc -p packages/core/tsconfig.json",
+    "start:cli": "sh build.sh && node dist/openinstinct.js",
+    "dev:dashboard": "npm run dev --workspace @openinstinct/dashboard"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "onnxruntime-node": "^1.18.0",
+    "playwright": "^1.47.0",
+    "playwright-extra": "^4.3.0",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "uuid": "^9.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "esbuild": "^0.23.0",
+    "typescript": "^5.5.4"
+  }
+}

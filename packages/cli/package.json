@@ -1,0 +1,11 @@
+{
+  "name": "openinstinct",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "openinstinct": "../dist/openinstinct.js"
+  },
+  "dependencies": {
+    "@openinstinct/core": "*"
+  }
+}
