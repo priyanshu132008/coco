@@ -27,11 +27,17 @@ export class StealthBrowser {
     this.page = await this.context.newPage()
   }
 
-  async navigateAndExtract(url: string): Promise<ExtractedPage> {
+  /** Active page accessor (throws when not initialized). */
+  getPage(): Page {
     if (!this.page) throw new Error('StealthBrowser not initialized — call initialize() first')
-    await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
-    const screenshot = await this.page.screenshot({ type: 'png' })
-    const nodes = await this.page.evaluate(() =>
+    return this.page
+  }
+
+  /** Current state capture: viewport screenshot + filtered interactive DOM, no navigation. */
+  async snapshot(): Promise<ExtractedPage> {
+    const page = this.getPage()
+    const screenshot = await page.screenshot({ type: 'png' })
+    const nodes = await page.evaluate(() =>
       Array.from(document.querySelectorAll<HTMLElement>('a, button, input, select, textarea'))
         .filter((el) => {
           const r = el.getBoundingClientRect()
@@ -44,10 +50,16 @@ export class StealthBrowser {
           href: el instanceof HTMLAnchorElement ? el.href : undefined,
           placeholder: el instanceof HTMLInputElement ? el.placeholder : undefined,
           ariaLabel: el.getAttribute('aria-label') || undefined,
-          text: (el.innerText || (el as HTMLInputElement).value || '').trim().slice(0, 120) || undefined,
+          text: ((el as HTMLElement).innerText || (el as HTMLInputElement).value || '').trim().slice(0, 120) || undefined,
         })),
     )
     return { screenshot, domTree: JSON.stringify(nodes) }
+  }
+
+  async navigateAndExtract(url: string): Promise<ExtractedPage> {
+    if (!this.page) throw new Error('StealthBrowser not initialized — call initialize() first')
+    await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    return this.snapshot()
   }
 
   async close(): Promise<void> {

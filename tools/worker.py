@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""OpenInstinct worker for Render — polls the Supabase task ledger, runs the agent, relays to Telegram.
+
+The Vercel webhook (serverless) only INSERTs tasks and routes chat decisions; this worker
+is the one long-running piece: it claims 'pending' tasks, executes tools/browser_driver.py,
+streams the driver's JSON events to the Telegram chat (messages, screenshots, gate buttons),
+relays human replies from the ledger (approval/OTP/location/retry — the driver polls them via
+ledger_poll), and writes the final status back.
+
+    SUPABASE_URL=... SUPABASE_SERVICE_KEY=... TELEGRAM_BOT_TOKEN=... python tools/worker.py
+"""
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
+from dotenv import load_dotenv
+
+load_dotenv()  # same .env convention as every other OpenInstinct entry point
+
+from tools import supabase_client as sbc
+from tools import worker_tg
+
+POLL = float(os.environ.get("OI_WORKER_POLL", "3"))
+#: Python + driver (browser-use needs py>=3.11; override on Render with OI_RUNNER_PYTHON)
+RUNNER_PYTHON = os.environ.get("OI_RUNNER_PYTHON") or sys.executable
+DRIVER = str(_ROOT / "tools" / "browser_driver.py")
+#: Exit codes → ledger status, same mapping the gateway learned the hard way.
+STATUS_BY_CODE = {0: "done", 130: "cancelled"}
+
+
+def claim_task() -> int | None:
+    """Atomically claim the oldest pending task: PATCH pending→running only if still pending."""
+    rows = sbc.rows("tasks", "status=eq.pending&order=id.asc", select="id", limit=1)
+    if not rows:
+        return None
+    task_id = rows[0]["id"]
+    claimed = sbc.update("tasks", f"id=eq.{task_id}&status=eq.pending", {"status": "running"}, select="id")
+    return task_id if claimed else None  # lost the race (another worker) — skip
+
+
+def spawn_runner(task_id: int) -> subprocess.Popen:
+    child = subprocess.Popen(
+        [RUNNER_PYTHON, DRIVER, "run", "--goal", _goal_text(task_id), "--task-id", str(task_id)],
+        cwd=str(_ROOT), env={**os.environ, "OI_AGENT_CLICK": "1"},
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    sbc.update("tasks", f"id=eq.{task_id}", {"pid": child.pid})
+    return child
+
+
+def _goal_text(task_id: int) -> str:
+    return str(sbc.first("tasks", f"id=eq.{task_id}", select="goal")["goal"])
+
+
+def watch_cancellations(running: dict[int, subprocess.Popen]) -> None:
+    """A /stop on the webhook flips status to 'cancelled' — SIGINT our child for it."""
+    if not running:
+        return
+    ids = ",".join(str(i) for i in running)
+    for row in sbc.rows("tasks", f"id=in.({ids})&status=eq.cancelled", select="id"):
+        child = running.get(row["id"])
+        try:
+            child.send_signal(signal.SIGINT)  # the driver tears the browser down on SIGINT
+            print(f"[worker] /stop → SIGINT task {row['id']}", flush=True)
+        except Exception:
+            pass
+
+
+class Relay(threading.Thread):
+    """One per task: stream the driver's stdout JSON events to the chat; update status on close."""
+
+    def __init__(self, task_id: int, chat_id: str, child: subprocess.Popen):
+        super().__init__(daemon=True)
+        self.task_id, self.chat_id, self.child = task_id, chat_id, child
+
+    def run(self) -> None:
+        assert self.child.stdout
+        buf = ""
+        for chunk in self.child.stdout:
+            buf += chunk.decode("utf-8", "replace")
+            lines, buf = buf.split("\n")[:-1], buf.split("\n")[-1]
+            for line in lines:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue  # stdout noise
+                try:
+                    self.relay(ev)
+                except Exception as e:
+                    print(f"[worker] relay failed for task {self.task_id}: {e}", file=sys.stderr, flush=True)
+        code = self.child.wait()
+        self.finish(code)
+
+    def relay(self, ev: dict) -> None:
+        kind = str(ev.get("type") or ev.get("event") or "")
+        if kind == "chat" and ev.get("message"):
+            worker_tg.message(self.chat_id, str(ev["message"])[:4096])
+        elif kind == "screenshot" and ev.get("path"):
+            worker_tg.photo(self.chat_id, ev["path"])
+        elif kind in ("vault_required", "credentials"):
+            self.gate("credentials", ev)
+        elif kind == "location_required":
+            self.gate("location", ev)
+        elif kind == "payment_required":
+            self.gate("card", ev)
+        elif kind == "approval_required":
+            self.gate("approval", ev, text=f"Checkout reached. Total: {ev.get('price') or '?'}\nReply \"approve\" to execute payment, \"deny\" to cancel.")
+        elif kind in ("otp_required", "code_required"):
+            self.gate("code", ev, text=f"🔐 Task #{self.task_id} needs a one-time password for {ev.get('domain') or 'the site'}. Reply with the 6 digits (e.g. \"otp 123456\").")
+        elif kind == "captcha_required":
+            self.gate("captcha", ev, text=f"🛡️ Cloudflare verification required for {ev.get('domain') or 'the site'}. Solve it and reply \"retry\".")
+        elif kind == "error" and ev.get("message"):
+            worker_tg.message(self.chat_id, f"❌ Task #{self.task_id} failed: {ev['message']}")
+
+    def gate(self, gate: str, ev: dict, text: str | None = None) -> None:
+        domain = str(ev.get("domain") or "")
+        # the webhook routes approve/deny/otp/address/retry by looking at task.gate
+        sbc.update("tasks", f"id=eq.{self.task_id}", {"gate": gate, "gate_domain": domain})
+        if gate in ("credentials", "location", "card") and domain:
+            worker_tg.message(self.chat_id, text or f"🔐 {domain} needs setup. Open the Secure Vault:", keyboard=domain)
+        elif text:
+            worker_tg.message(self.chat_id, text)
+
+    def finish(self, code: int) -> None:
+        current = (sbc.first("tasks", f"id=eq.{self.task_id}", select="status") or {}).get("status")
+        print(f"[worker] task {self.task_id} runner exited ({code})", file=sys.stderr, flush=True)
+        if current == "cancelled":  # /stop already wrote the verdict — keep it
+            status = "cancelled"
+        else:
+            status = STATUS_BY_CODE.get(code, "failed") if code is not None else "failed"  # killed
+        sbc.update("tasks", f"id=eq.{self.task_id}", {"status": status, "pid": None, "gate": None})
+        notices = {
+            "cancelled": "🛑 Task #{0} cancelled.".format(self.task_id),
+            "done": "✅ Task #{0} finished.".format(self.task_id),
+            "failed": "❌ Task #{0} failed.".format(self.task_id),
+        }
+        worker_tg.message(self.chat_id, notices[status])
+
+
+def main() -> int:
+    if not sbc.enabled():
+        print("[worker] SUPABASE_URL / SUPABASE_SERVICE_KEY missing — nothing to poll", file=sys.stderr)
+        return 2
+    if not os.environ.get("TELEGRAM_BOT_TOKEN"):
+        print("[worker] TELEGRAM_BOT_TOKEN missing — cannot relay to chat", file=sys.stderr)
+        return 2
+    print(f"[worker] polling Supabase every {POLL:g}s", flush=True)
+    running: dict[int, subprocess.Popen] = {}
+    while True:
+        try:
+            watch_cancellations(running)
+            for task_id, child in list(running.items()):
+                if child.poll() is not None:
+                    running.pop(task_id)
+            task_id = claim_task()
+            if task_id and task_id not in running:
+                row = sbc.first("tasks", f"id=eq.{task_id}", select="phone_number")
+                child = spawn_runner(task_id)
+                running[task_id] = child
+                Relay(task_id, str((row or {}).get("phone_number") or ""), child).start()
+                print(f"[worker] claimed task {task_id} (pid {child.pid})", flush=True)
+        except Exception as e:
+            print(f"[worker] loop error: {e}", file=sys.stderr, flush=True)
+        time.sleep(POLL)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

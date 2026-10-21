@@ -1,0 +1,28 @@
+# Render blueprint — the browser worker (the only long-running OpenInstinct piece).
+# The dashboard/webhook deploys separately to Vercel (serverless); they meet in Supabase.
+services:
+  - type: worker
+    name: openinstinct-worker
+    runtime: docker
+    dockerfilePath: ./tools/Dockerfile
+    dockerContext: .
+    plan: starter
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OI_VAULT_KEY          # the Fernet key — vault.py reads/uses it directly
+        sync: false
+      - key: OI_PUBLIC_URL         # e.g. the Vercel deployment URL — used for Mini App links
+        sync: false
+      - key: OI_MODEL_API_KEY      # whichever provider key config.json's model needs
+        sync: false
+      - key: MASTER_PROXY_SERVER   # phase 4 residential proxy (owner-managed)
+        sync: false
+      - key: MASTER_PROXY_USERNAME
+        sync: false
+      - key: MASTER_PROXY_PASSWORD
+        sync: false

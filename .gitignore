@@ -1,3 +1,16 @@
 node_modules/
 dist/
 .DS_Store
+*.jsonl
+.env
+
+# gateway secrets & ledgers
+telegram_gateway/tasks.db
+telegram_gateway/.wwebjs_auth/
+telegram_gateway/.wwebjs_cache/
+vault.db
+.browser_profile/
+telegram_gateway/gateway.log
+
+.venv/
+__pycache__/
