@@ -150,7 +150,13 @@ class Relay(threading.Thread):
 # Update CloakBrowser and Render Port Sync — health thread + Supabase polling loop
 def start_health_server() -> None:
     """Render free tier runs this as a Web Service, not a paid Background Worker —
-    so the polling loop keeps its thread and the health route lives in a daemon one."""
+    so the polling loop keeps its thread and the health route lives in a daemon one.
+
+    Bound 0.0.0.0 on $PORT — the port scan must find it open within seconds of boot,
+    which is why it is called before anything else in __main__ (idempotent)."""
+    global _HEALTH_SET
+    if _HEALTH_SET:
+        return
     port = int(os.environ.get("PORT") or 10000)
 
     class Handler(BaseHTTPRequestHandler):
@@ -169,21 +175,28 @@ def start_health_server() -> None:
         target=HTTPServer(("0.0.0.0", port), Handler).serve_forever,
         daemon=True,
     ).start()
+    _HEALTH_SET = True
     print(f"[worker] health server on 0.0.0.0:{port}", flush=True)
 
 
+_HEALTH_SET = False
+
+
 def main() -> int:
+    # NO early return on missing env: the health server is already up (bound in
+    # __main__), so staying alive with logged warnings is what a deploy should do —
+    # exiting here re-created the "no open ports detected" failure on Render.
     if not sbc.enabled():
-        print("[worker] SUPABASE_URL / SUPABASE_SERVICE_KEY missing — nothing to poll", file=sys.stderr)
-        return 2
+        print("[worker] SUPABASE_URL / SUPABASE_SERVICE_KEY missing — healthcheck up, worker idle", file=sys.stderr)
     if not os.environ.get("TELEGRAM_BOT_TOKEN"):
-        print("[worker] TELEGRAM_BOT_TOKEN missing — cannot relay to chat", file=sys.stderr)
-        return 2
-    start_health_server()
+        print("[worker] TELEGRAM_BOT_TOKEN missing — healthcheck up, worker idle", file=sys.stderr)
     print(f"[worker] polling Supabase every {POLL:g}s", flush=True)
     running: dict[int, subprocess.Popen] = {}
     while True:
         try:
+            if not (sbc.enabled() and os.environ.get("TELEGRAM_BOT_TOKEN")):
+                time.sleep(POLL)  # misconfigured — stay up for the healthcheck, claim nothing
+                continue
             watch_cancellations(running)
             for task_id, child in list(running.items()):
                 if child.poll() is not None:
@@ -201,4 +214,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # absolute first line: bind the port before ANY import-heavy work or env checks —
+    # Render's port scan times out if nothing listens during boot
+    start_health_server()
     sys.exit(main())
