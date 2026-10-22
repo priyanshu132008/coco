@@ -23,3 +23,4 @@ com.openinstinct.gateway.plist
 packages/dashboard/.next/
 *.tsbuildinfo
 .browser_profile*
+supabase/.temp/
