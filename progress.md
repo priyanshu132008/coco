@@ -196,3 +196,22 @@ Status: **done** — verified end to end.
 - playwright-stealth skipped: webdriver patch covers it; add the dep only if Cloudflare
   still flags the fingerprint.
 - Verified: driver --check green, BrowserProfile accepts the args. Committed & pushed.
+
+## 2026-10-22 — CloakBrowser replaces Playwright Chromium
+- tools/browser_driver.py: browser-use launches the cloakbrowser binary directly
+  (cloak_launch_args: fingerprint seed file, --fingerprint-noise=false,
+  --fingerprint-windows-font-metrics, --remote-debugging-port=9242, --lang=en-IN,
+  --fingerprint-timezone=Asia/Kolkata, ignore --enable-automation).
+- JS-level navigator.webdriver/plugins/Intl spoofs REMOVED (binary-native now).
+  Kept: Mumbai geolocation spoof (GEO_INIT_SCRIPT via CDP) + CDP Indian overrides
+  (Accept-Language en-IN header, setLocaleOverride, setTimeZoneOverride, setGeoOverride).
+- Key discovery: the doc'd "launch cloak then connect via CDP" crashes Chrome 145
+  (SIGTRAP — debugging pipe + ws port can't coexist); same binary+args through
+  browser-use's own launch is the stable route. humanize=True dropped (cloak-
+  library feature) — browser-use step pacing covers behavior.
+- Legacy .browser_profile moved to .browser_profile.legacy (Chrome 145 SIGTRAPs on the
+  old-chromium profile; fresh profile will rebuild).
+- Dockerfile: Windows-metrics font stack + xvfb + cloak binary baked at build; runs
+  headed (OI_HEADLESS=0) on Xvfb.
+- Verified: --check ok; real driver run navigated example.com, indian context applied
+  (tz/locale/geo), agent completed, no orphan Chrome. Committed & pushed.
