@@ -14,3 +14,11 @@ telegram_gateway/gateway.log
 
 .venv/
 __pycache__/
+
+# local artifacts & runtime caches
+dataset.zip
+.wwebjs_cache/
+config.json.bak
+com.openinstinct.gateway.plist
+packages/dashboard/.next/
+*.tsbuildinfo
