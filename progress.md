@@ -176,3 +176,10 @@ Status: **done** — verified end to end.
   local artifacts (dataset.zip, root .wwebjs_cache/, config.json.bak, launchd plist,
   dashboard/.next, tsbuildinfo). Pushed to origin main alongside the already-committed
   Supabase/Render work (0264c32).
+
+## 2026-10-22 — worker as free Web Service
+- worker.py: start_health_server() — stdlib http.server thread on 0.0.0.0:$PORT
+  (default 10000) serving GET / → 200 {"status":"alive"}; polling loop unchanged
+  (main thread). Smoke-tested locally: 200 alive.
+- tools/Dockerfile: EXPOSE 10000. render.yaml: type worker→web, plan starter→free,
+  healthCheckPath: /. Committed a45b77e and pushed.
