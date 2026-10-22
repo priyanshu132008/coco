@@ -27,6 +27,7 @@ RUN python -m cloakbrowser install
 
 # headless=True is detectable even with binary patches — under xvfb the browser is headed
 ENV PYTHONUNBUFFERED=1 OI_HEADLESS=0
+# Update CloakBrowser and Render Port Sync — CMD serves GET / on $PORT (Render health check)
 EXPOSE 10000
 # headed cloak browser (headless is detectable) on a virtual display
 CMD ["xvfb-run", "-a", "python", "tools/worker.py"]

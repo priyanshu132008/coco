@@ -147,6 +147,7 @@ class Relay(threading.Thread):
         worker_tg.message(self.chat_id, notices[status])
 
 
+# Update CloakBrowser and Render Port Sync — health thread + Supabase polling loop
 def start_health_server() -> None:
     """Render free tier runs this as a Web Service, not a paid Background Worker —
     so the polling loop keeps its thread and the health route lives in a daemon one."""
