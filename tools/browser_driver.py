@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""OpenInstinct hidden browser execution layer — browser-use agent over the BYOK model.
+"""OpenInstinct hidden browser execution layer — browser-use agent over CloakBrowser.
 
-Two-phase HitL: the agent pursues the goal but is instructed to STOP on any
-payment/checkout/purchase page (report the total) and on OTP/2FA fields (report
-the domain). The driver emits gateway events, waits on the ledger, and on
-approval issues a single-use Privacy card via sensitive_data to finish the task.
+CloakBrowser is launched first (persistent profile, binary-level fingerprint stealth),
+then browser-use attaches over CDP. Two-phase HitL: the agent pursues the goal but is
+instructed to STOP on any payment/checkout/purchase page (report the total) and on
+OTP/2FA fields (report the domain). The driver emits gateway events, waits on the
+ledger, and on approval issues a single-use Privacy card via sensitive_data to finish.
 
 Runs under .venv-bu (browser-use needs py>=3.11); the legacy SoM/pyautogui
 runner stays in the default .venv.
@@ -81,42 +82,17 @@ BLOCKED_TEXT_RE = re.compile(
     r"|error\s*1016|error\s*1020|access denied|ray id",
     re.I,
 )
-#: Chrome flags that blunt the automation fingerprint. browser-use already ships the
-#: AutomationControlled one; the rest hide the CDP-only quirks Cloudflare fingerprints.
-#: --lang=en-IN also makes Chrome's own Accept-Language/Intl defaults Indian.
-STEALTH_ARGS = [
-    "--disable-blink-features=AutomationControlled",
-    "--disable-web-security",
-    "--disable-features=IsolateOrigins,site-per-process",
-    "--lang=en-IN",
-]
-#: Indian context, enforced on every browser init (task: strict India stealth).
+#: Indian context, enforced on every browser init.
 INDIAN_TIMEZONE = "Asia/Kolkata"
 INDIAN_LOCALE = "en-IN"
 MUMBAI_GEO = {"latitude": 19.0760, "longitude": 72.8777, "accuracy": 100}
 ACCEPT_LANGUAGE = "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7"
-#: Runs in every new document before the page's own scripts — hides the webdriver flag,
-#: pins the Indian locale/timezone/geolocation at the JS level (browser-use's profile
-#: model strips Playwright's locale/timezone/context options, so JS + CDP is the channel).
-STEALTH_INIT_SCRIPT = """
-Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en-GB', 'en-US', 'en']});
-Object.defineProperty(navigator, 'language', {get: () => 'en-IN'});
-Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
-window.chrome = window.chrome || {runtime: {}};
-// IST = UTC+5.5 — spoof both the offset and Intl, or site time logic reads system tz
-Date.prototype.getTimezoneOffset = function () { return -330; };
-const _DTF = Intl.DateTimeFormat;
-Intl.DateTimeFormat = function (...args) {
-  for (const a of args) if (a && typeof a === 'object' && !a.timeZone) { a.timeZone = 'Asia/Kolkata'; }
-  return new _DTF(...args);
-};
-Intl.DateTimeFormat.prototype = _DTF.prototype;
-const _RO = _DTF.prototype.resolvedOptions;
-Intl.DateTimeFormat.prototype.resolvedOptions = function () {
-  const o = _RO.call(this); o.timeZone = 'Asia/Kolkata'; o.locale = 'en-IN'; return o;
-};
-// Mumbai geolocation — granted, Indian coordinates, always
+#: CloakBrowser supplies the endpoint browser-use connects to (strict anti-bot config).
+CDP_PORT = int(os.environ.get("OI_CDP_PORT", "9242"))
+CDP_ENDPOINT = f"http://localhost:{CDP_PORT}"
+#: CloakBrowser handles webdriver/plugins/Intl-fingerprint spoofing natively at the binary
+#: level (and launches with locale/timezone baked in) — only geolocation is left to JS.
+GEO_INIT_SCRIPT = """
 const _MUMBAI = {latitude: 19.076, longitude: 72.8777, accuracy: 100};
 navigator.geolocation.getCurrentPosition = (ok) => ok({coords: Object.assign({}, _MUMBAI), timestamp: Date.now()});
 navigator.geolocation.watchPosition = (ok) => { ok({coords: Object.assign({}, _MUMBAI), timestamp: Date.now()}); return 0; };
@@ -239,24 +215,42 @@ def emit_frame(tag: str, data: Optional[bytes], task_id: Optional[int]) -> None:
     emit({"type": "screenshot", "path": png})
 
 
-async def start_browser_session(session) -> None:
-    """Start the browser, waiting out a profile lock held by a live Chrome process.
+def cloak_launch_args() -> tuple[str, list[str]]:
+    """The CloakBrowser binary plus its exact stealth arg set, for browser-use to launch.
 
-    Chrome aborts at startup with 'Failed to create .../SingletonLock: File exists' when
-    another Chrome still holds the profile — the CDP port never opens and the launch looks
-    like a mystery crash. Wait for the holder to exit, then retry the launch.
-
-    No-op when the session is already up: on the second gate round *our own* browser holds
-    the lock, and waiting for it would deadlock.
+    The doc'd launch-then-connect-over-CDP path is unusable on Chrome 145: cloakbrowser
+    starts the browser over the debugging pipe, and Chrome dies (SIGTRAP) the moment a
+    second client attaches via the port. Launching the same binary and args through
+    browser-use keeps one transport (the pipe browser-use already drives) and the full
+    binary-level fingerprint patch set. humanize=True is the one cloak-library feature
+    this drops — browser-use's own step pacing covers the behavioral layer.
     """
-    if session.cdp_url:
+    from cloakbrowser.browser import build_args
+    from cloakbrowser.config import IGNORE_DEFAULT_ARGS, persistent_seed_args
+    from cloakbrowser.download import ensure_binary
+
+    binary = ensure_binary()
+    extra = persistent_seed_args(PROFILE_DIR, True, [
+        f"--remote-debugging-port={CDP_PORT}",  # kept for live-debugging the browser
+        "--fingerprint-noise=false",  # prevents FingerprintJS tampering detection
+        "--fingerprint-windows-font-metrics",  # aligns Linux font metrics to Windows
+    ])
+    return binary, build_args(
+        True, extra, timezone=INDIAN_TIMEZONE, locale=INDIAN_LOCALE, headless=HEADLESS,
+    )
+
+
+async def start_browser_session(session) -> None:
+    """Start the CloakBrowser-backed session, waiting out a profile lock held by a live
+    Chrome process (same SingletonLock semantics as the legacy Playwright launches)."""
+    if session.cdp_url or session.agent_focus_target_id is not None:
         return  # already running — the browser we started holds the lock
     last_error: Optional[BaseException] = None
     for attempt in range(3):
         try:
             await wait_for_profile_lock()
             await session.start()
-            await install_stealth_script(session)
+            await install_indian_stealth(session)
             return
         except Exception as e:
             last_error = e
@@ -269,19 +263,19 @@ async def start_browser_session(session) -> None:
     raise last_error or RuntimeError("browser launch failed")
 
 
-async def install_stealth_script(session) -> None:
-    """Strip the webdriver fingerprint and pin the Indian context on every document.
+async def install_indian_stealth(session) -> None:
+    """Geolocation spoof via CDP init script + locale/tz/geo/header CDP overrides.
 
-    `navigator.webdriver` is the single loudest signal that the page is under
-    automation — Cloudflare reads it before deciding to challenge. The script is
-    injected via CDP so it runs before the page's own scripts on every navigation.
+    CloakBrowser's binary handles webdriver/plugin/Intl fingerprint spoofing and
+    launches with en-IN / Asia/Kolkata baked in — only geolocation and the
+    Accept-Language header need the CDP pass. Idempotent per target.
     """
     try:
-        await session._cdp_add_init_script(STEALTH_INIT_SCRIPT)
-        print("[bu] stealth init script installed", file=sys.stderr, flush=True)
+        await session._cdp_add_init_script(GEO_INIT_SCRIPT)
+        print("[bu] geo init script installed", file=sys.stderr, flush=True)
     except Exception as e:
-        # not fatal — the browser still works, it just looks more like a bot
-        print(f"[bu] stealth init script failed: {e}", file=sys.stderr, flush=True)
+        # not fatal — the browser still works, it just reports a system geo
+        print(f"[bu] geo init script failed: {e}", file=sys.stderr, flush=True)
     await apply_indian_context(session)
 
 
@@ -307,7 +301,8 @@ async def apply_indian_context(session) -> None:
         }
         for method, params in overrides.items():
             domain, _, attr = method.partition(".")
-            await getattr(getattr(cdp.cdp_client, domain), attr)(
+            send = cdp.cdp_client.send
+            await getattr(getattr(send, domain), attr)(
                 params=params, session_id=cdp.session_id
             )
         if already is None:
@@ -462,21 +457,22 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             return 0
 
     llm = ChatLiteLLM(model=load_model_config())
+    # browser-use launches the CloakBrowser binary itself (cloak_launch_args carries the
+    # fingerprint-stealth arg set); profile fields beyond that are what the session uses.
+    _exec, _args = cloak_launch_args()
     profile = BrowserProfile(
-        headless=HEADLESS,
+        executable_path=_exec,
+        args=_args,
+        ignore_default_args=["--enable-automation", "--enable-unsafe-swiftshader"],
         user_data_dir=PROFILE_DIR,  # persistent sessions — survive across tasks
-        chromium_sandbox=False,  # --no-sandbox
-        # NOTE: no channel="chrome" — browser-use copies the profile to a temp dir for
-        # real Chrome, which would break both profile persistence and the profile-lock
-        # detection below (the SingletonLock would live in the temp dir). The default
-        # resolution already picks the installed Google Chrome over bundled Chromium.
-        args=list(STEALTH_ARGS),
+        chromium_sandbox=False,  # --no-sandbox (cloak args also pass it; belt & suspenders)
+        headless=HEADLESS,
+        proxy=master_proxy(),  # None → direct connection, as before
         highlight_elements=False,  # no bot-y visual overlays
         permissions=["geolocation", "clipboardReadWrite", "notifications"],
         # standard desktop viewport — without it some sites (Swiggy) serve a mobile
         # overlay whose Share-location sheet covers the page and confuses the agent
         viewport={"width": 1280, "height": 720},
-        proxy=master_proxy(),  # None → direct connection, as before
     )
     session = BrowserSession(browser_profile=profile)
     install_sigint_handler(session)
@@ -731,10 +727,24 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     if args.check:
-        # Indian stealth: init script + args must carry every enforced attribute
-        assert "--lang=en-IN" in STEALTH_ARGS
-        assert "Asia/Kolkata" in STEALTH_INIT_SCRIPT and "19.076" in STEALTH_INIT_SCRIPT
-        assert "'webdriver'" in STEALTH_INIT_SCRIPT and "getTimezoneOffset" in STEALTH_INIT_SCRIPT
+        # cloak + indian stealth: strict config must carry every enforced attribute
+        assert CDP_PORT == 9242 and CDP_ENDPOINT == "http://localhost:9242"
+        assert "19.076" in GEO_INIT_SCRIPT and "72.8777" in GEO_INIT_SCRIPT
+        assert INDIAN_TIMEZONE == "Asia/Kolkata" and INDIAN_LOCALE == "en-IN"
+        import inspect
+
+        from cloakbrowser.browser import build_args as _ba
+        from cloakbrowser.config import IGNORE_DEFAULT_ARGS, persistent_seed_args as _psa
+        from cloakbrowser.download import ensure_binary as _eb
+
+        assert callable(_ba) and callable(_psa) and callable(_eb)  # cloak integration intact
+        _args_check = _ba(True, _psa(str(_ROOT / ".browser_profile"), True, [
+            f"--remote-debugging-port={CDP_PORT}",
+            "--fingerprint-noise=false",
+            "--fingerprint-windows-font-metrics",
+        ]), timezone=INDIAN_TIMEZONE, locale=INDIAN_LOCALE, headless=True)
+        assert "--fingerprint-timezone=Asia/Kolkata" in _args_check and "--lang=en-IN" in _args_check, _args_check
+        assert any(a.startswith("--fingerprint=") for a in _args_check), _args_check
         assert extract_price("Total: ₹1,499.00") == "₹1,499.00", extract_price("Total: ₹1,499.00")
         assert extract_price("Grand total: $450.00 with tax") == "$450.00", extract_price("Grand total: $450.00 with tax")
         assert extract_price("no money here") is None

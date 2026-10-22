@@ -15,6 +15,18 @@ COPY config.json config.json
 # belt & suspenders: reassert the browsers for the exact pip playwright version
 RUN python -m playwright install chromium
 
-ENV PYTHONUNBUFFERED=1
+# font stack for the Windows-metrics fingerprint on a bare Linux VM — without it the
+# cloak binary claims Windows while the canvas hashes to a font-less box (Kasada/Akamai)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont fonts-ipafont-gothic \
+    fonts-wqy-zenhei fonts-tlwg-loma-otf xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
+# bake the cloak chromium binary into the image (worker start must not download)
+RUN python -m cloakbrowser install
+
+# headless=True is detectable even with binary patches — under xvfb the browser is headed
+ENV PYTHONUNBUFFERED=1 OI_HEADLESS=0
 EXPOSE 10000
-CMD ["python", "tools/worker.py"]
+# headed cloak browser (headless is detectable) on a virtual display
+CMD ["xvfb-run", "-a", "python", "tools/worker.py"]
