@@ -170,3 +170,9 @@ Status: **done** — verified end to end.
   state and task-spawn logic (/vault → vaultKeyboard button). Screenshot's "/vault booting a
   browser" was the legacy gateway running daemon-side; restart it to pick this up.
 - Verified: node --check gateway.js, tsc clean, next build ok.
+
+## 2026-10-22 — commit & push to GitHub
+- eb9a0c6: telegram_gateway package.json/package-lock.json added; .gitignore now covers
+  local artifacts (dataset.zip, root .wwebjs_cache/, config.json.bak, launchd plist,
+  dashboard/.next, tsbuildinfo). Pushed to origin main alongside the already-committed
+  Supabase/Render work (0264c32).
