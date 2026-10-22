@@ -1,12 +1,15 @@
-# Render blueprint — the browser worker (the only long-running OpenInstinct piece).
-# The dashboard/webhook deploys separately to Vercel (serverless); they meet in Supabase.
+# Render blueprint — the browser worker deploys as a free Web Service: the same
+# script serves a tiny health endpoint on $PORT (Render pings `/`) while the
+# Supabase polling loop runs alongside it. The dashboard/webhook deploys separately
+# to Vercel (serverless); they meet in Supabase.
 services:
-  - type: worker
+  - type: web
     name: openinstinct-worker
     runtime: docker
     dockerfilePath: ./tools/Dockerfile
     dockerContext: .
-    plan: starter
+    plan: free
+    healthCheckPath: /
     envVars:
       - key: SUPABASE_URL
         sync: false

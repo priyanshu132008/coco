@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -146,6 +147,30 @@ class Relay(threading.Thread):
         worker_tg.message(self.chat_id, notices[status])
 
 
+def start_health_server() -> None:
+    """Render free tier runs this as a Web Service, not a paid Background Worker —
+    so the polling loop keeps its thread and the health route lives in a daemon one."""
+    port = int(os.environ.get("PORT") or 10000)
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            body = b'{"status": "alive"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass  # health checks every ~10s would drown the task log
+
+    threading.Thread(
+        target=HTTPServer(("0.0.0.0", port), Handler).serve_forever,
+        daemon=True,
+    ).start()
+    print(f"[worker] health server on 0.0.0.0:{port}", flush=True)
+
+
 def main() -> int:
     if not sbc.enabled():
         print("[worker] SUPABASE_URL / SUPABASE_SERVICE_KEY missing — nothing to poll", file=sys.stderr)
@@ -153,6 +178,7 @@ def main() -> int:
     if not os.environ.get("TELEGRAM_BOT_TOKEN"):
         print("[worker] TELEGRAM_BOT_TOKEN missing — cannot relay to chat", file=sys.stderr)
         return 2
+    start_health_server()
     print(f"[worker] polling Supabase every {POLL:g}s", flush=True)
     running: dict[int, subprocess.Popen] = {}
     while True:

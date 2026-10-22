@@ -16,4 +16,5 @@ COPY config.json config.json
 RUN python -m playwright install chromium
 
 ENV PYTHONUNBUFFERED=1
+EXPOSE 10000
 CMD ["python", "tools/worker.py"]
