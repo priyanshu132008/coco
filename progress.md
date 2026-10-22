@@ -220,3 +220,11 @@ Status: **done** — verified end to end.
 - Origin main was already in sync (e60f9c1 included cd18dbd's code); Render just hadn't
   picked it up. Pushed 15acef6 (comment marker in worker.py + Dockerfile) to force a
   redeploy. Health server verified present: worker.py start_health_server() on $PORT.
+
+## 2026-10-22 — health port bound first on boot
+- worker.py: start_health_server() is now the first line of __main__ (was after env
+  checks — a missing env var exited(2) within a second and Render timed out the port
+  scan). Missing env now warns and idles (claims nothing) instead of exiting, so the
+  deploy goes green and the misconfig is visible in Render logs.
+- Idempotent binding via _HEALTH_SET; smoke-tested: / → 200 {"status":"alive"}, process
+  alive through idle poll cycles. Committed a5ec2fe, pushed.
