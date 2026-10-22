@@ -41,12 +41,18 @@ def rest(method: str, table: str, *, filters: str = "", select: str = "", body: 
     headers = {"Content-Type": "application/json"}
     if prefer:
         headers["Prefer"] = prefer
-    headers["apikey"] = headers["Authorization"] = f"Bearer {os.environ['SUPABASE_SERVICE_KEY']}"
+    key = os.environ['SUPABASE_SERVICE_KEY']
+    # apikey takes the RAW key — a "Bearer" prefix there is a guaranteed 401
+    headers["apikey"] = key
+    headers["Authorization"] = f"Bearer {key}"
     resp = requests.request(
         method, url, params="&".join(params) if params else None,
         json=body, headers=headers, timeout=_TIMEOUT,
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise requests.HTTPError(
+            f"{resp.status_code} {resp.reason} for {url}: {resp.text[:200]}", response=resp
+        )
     if not resp.text:
         return []
     return resp.json()
