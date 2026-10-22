@@ -183,3 +183,16 @@ Status: **done** — verified end to end.
   (main thread). Smoke-tested locally: 200 alive.
 - tools/Dockerfile: EXPOSE 10000. render.yaml: type worker→web, plan starter→free,
   healthCheckPath: /. Committed a45b77e and pushed.
+
+## 2026-10-22 — Indian stealth context in browser_driver.py
+- STEALTH_ARGS + --lang=en-IN; STEALTH_INIT_SCRIPT now spoofs navigator.language(s),
+  IST timezone (getTimezoneOffset -330 + Intl.DateTimeFormat patched), Mumbai geolocation
+  (getCurrentPosition/watchPosition), keeping the navigator.webdriver patch.
+- apply_indian_context(): per-target CDP overrides (setExtraHTTPHeaders Accept-Language,
+  setLocaleOverride, setTimeZoneOverride, setGeolocationOverride), idempotent per target,
+  re-applied in on_step_start for mid-task tabs. Profile permissions now grant geolocation.
+- Reason: this browser-use build strips Playwright's locale/tz/geo/header context options
+  (commented out in its BrowserContextArgs) — CDP + init script is the channel it gives us.
+- playwright-stealth skipped: webdriver patch covers it; add the dep only if Cloudflare
+  still flags the fingerprint.
+- Verified: driver --check green, BrowserProfile accepts the args. Committed & pushed.
