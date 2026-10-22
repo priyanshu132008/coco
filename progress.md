@@ -215,3 +215,8 @@ Status: **done** — verified end to end.
   headed (OI_HEADLESS=0) on Xvfb.
 - Verified: --check ok; real driver run navigated example.com, indian context applied
   (tz/locale/geo), agent completed, no orphan Chrome. Committed & pushed.
+
+## 2026-10-22 — Render deploy unstuck
+- Origin main was already in sync (e60f9c1 included cd18dbd's code); Render just hadn't
+  picked it up. Pushed 15acef6 (comment marker in worker.py + Dockerfile) to force a
+  redeploy. Health server verified present: worker.py start_health_server() on $PORT.
