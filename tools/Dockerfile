@@ -29,5 +29,8 @@ RUN python -m cloakbrowser install
 ENV PYTHONUNBUFFERED=1 OI_HEADLESS=0
 # Update CloakBrowser and Render Port Sync — CMD serves GET / on $PORT (Render health check)
 EXPOSE 10000
-# headed cloak browser (headless is detectable) on a virtual display
-CMD ["xvfb-run", "-a", "python", "tools/worker.py"]
+# headed cloak browser (headless is detectable) on a virtual display;
+# the shell marker prints make a boot failure diagnosable from Render logs alone
+COPY tools/entrypoint.sh tools/entrypoint.sh
+RUN chmod +x tools/entrypoint.sh
+CMD ["tools/entrypoint.sh"]
