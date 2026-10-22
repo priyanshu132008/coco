@@ -83,17 +83,43 @@ BLOCKED_TEXT_RE = re.compile(
 )
 #: Chrome flags that blunt the automation fingerprint. browser-use already ships the
 #: AutomationControlled one; the rest hide the CDP-only quirks Cloudflare fingerprints.
+#: --lang=en-IN also makes Chrome's own Accept-Language/Intl defaults Indian.
 STEALTH_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-web-security",
     "--disable-features=IsolateOrigins,site-per-process",
+    "--lang=en-IN",
 ]
-#: Runs in every new document before the page's own scripts — hides the webdriver flag.
+#: Indian context, enforced on every browser init (task: strict India stealth).
+INDIAN_TIMEZONE = "Asia/Kolkata"
+INDIAN_LOCALE = "en-IN"
+MUMBAI_GEO = {"latitude": 19.0760, "longitude": 72.8777, "accuracy": 100}
+ACCEPT_LANGUAGE = "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7"
+#: Runs in every new document before the page's own scripts — hides the webdriver flag,
+#: pins the Indian locale/timezone/geolocation at the JS level (browser-use's profile
+#: model strips Playwright's locale/timezone/context options, so JS + CDP is the channel).
 STEALTH_INIT_SCRIPT = """
 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+Object.defineProperty(navigator, 'languages', {get: () => ['en-IN', 'en-GB', 'en-US', 'en']});
+Object.defineProperty(navigator, 'language', {get: () => 'en-IN'});
 Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
 window.chrome = window.chrome || {runtime: {}};
+// IST = UTC+5.5 — spoof both the offset and Intl, or site time logic reads system tz
+Date.prototype.getTimezoneOffset = function () { return -330; };
+const _DTF = Intl.DateTimeFormat;
+Intl.DateTimeFormat = function (...args) {
+  for (const a of args) if (a && typeof a === 'object' && !a.timeZone) { a.timeZone = 'Asia/Kolkata'; }
+  return new _DTF(...args);
+};
+Intl.DateTimeFormat.prototype = _DTF.prototype;
+const _RO = _DTF.prototype.resolvedOptions;
+Intl.DateTimeFormat.prototype.resolvedOptions = function () {
+  const o = _RO.call(this); o.timeZone = 'Asia/Kolkata'; o.locale = 'en-IN'; return o;
+};
+// Mumbai geolocation — granted, Indian coordinates, always
+const _MUMBAI = {latitude: 19.076, longitude: 72.8777, accuracy: 100};
+navigator.geolocation.getCurrentPosition = (ok) => ok({coords: Object.assign({}, _MUMBAI), timestamp: Date.now()});
+navigator.geolocation.watchPosition = (ok) => { ok({coords: Object.assign({}, _MUMBAI), timestamp: Date.now()}); return 0; };
 """
 #: Master residential proxy (Phase 4) — owned by the platform via server env, no user-facing
 #: config. Every Playwright navigation routes through it when MASTER_PROXY_SERVER is set.
@@ -244,7 +270,7 @@ async def start_browser_session(session) -> None:
 
 
 async def install_stealth_script(session) -> None:
-    """Strip the webdriver fingerprint from every document the browser loads.
+    """Strip the webdriver fingerprint and pin the Indian context on every document.
 
     `navigator.webdriver` is the single loudest signal that the page is under
     automation — Cloudflare reads it before deciding to challenge. The script is
@@ -256,6 +282,42 @@ async def install_stealth_script(session) -> None:
     except Exception as e:
         # not fatal — the browser still works, it just looks more like a bot
         print(f"[bu] stealth init script failed: {e}", file=sys.stderr, flush=True)
+    await apply_indian_context(session)
+
+
+async def apply_indian_context(session) -> None:
+    """Locale/timezone/geolocation/headers via CDP, for the browser and the active page.
+
+    This browser-use build drops Playwright's locale/timezone_id/geolocation/
+    extra_http_headers context options, so the overrides go through CDP:
+    chrome-level (root client) where possible, plus the active page target.
+    Idempotent per target — safe to call again when a new tab becomes active.
+    """
+    try:
+        cdp = await session.get_or_create_cdp_session()
+        target_id = getattr(cdp, "target_id", None)
+        already = getattr(session, "_indian_stealth_targets", None)
+        if already and target_id in already:
+            return
+        overrides = {
+            "Network.setExtraHTTPHeaders": {"headers": {"Accept-Language": ACCEPT_LANGUAGE}},
+            "Emulation.setLocaleOverride": {"locale": INDIAN_LOCALE},
+            "Emulation.setTimezoneOverride": {"timezoneId": INDIAN_TIMEZONE},
+            "Emulation.setGeolocationOverride": MUMBAI_GEO,
+        }
+        for method, params in overrides.items():
+            domain, _, attr = method.partition(".")
+            await getattr(getattr(cdp.cdp_client, domain), attr)(
+                params=params, session_id=cdp.session_id
+            )
+        if already is None:
+            already = set()
+            session._indian_stealth_targets = already
+        already.add(target_id)
+        print(f"[bu] indian context applied (tz={INDIAN_TIMEZONE}, locale={INDIAN_LOCALE}, geo=mumbai)", file=sys.stderr, flush=True)
+    except Exception as e:
+        # not fatal — page still works, it just reads as the server's local context
+        print(f"[bu] indian context override failed: {e}", file=sys.stderr, flush=True)
 
 
 #: One round trip: find the Cloudflare widget, its click point, or the challenge text.
@@ -410,6 +472,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
         # resolution already picks the installed Google Chrome over bundled Chromium.
         args=list(STEALTH_ARGS),
         highlight_elements=False,  # no bot-y visual overlays
+        permissions=["geolocation", "clipboardReadWrite", "notifications"],
         # standard desktop viewport — without it some sites (Swiggy) serve a mobile
         # overlay whose Share-location sheet covers the page and confuses the agent
         viewport={"width": 1280, "height": 720},
@@ -447,6 +510,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
         if stop_on_pay:
             return
         try:
+            await apply_indian_context(session)  # idempotent — covers tabs opened mid-task
             page = await session.get_current_page()
             if not page or not await probe_captcha(page):
                 return
@@ -667,6 +731,10 @@ if __name__ == "__main__":
     args = p.parse_args()
 
     if args.check:
+        # Indian stealth: init script + args must carry every enforced attribute
+        assert "--lang=en-IN" in STEALTH_ARGS
+        assert "Asia/Kolkata" in STEALTH_INIT_SCRIPT and "19.076" in STEALTH_INIT_SCRIPT
+        assert "'webdriver'" in STEALTH_INIT_SCRIPT and "getTimezoneOffset" in STEALTH_INIT_SCRIPT
         assert extract_price("Total: ₹1,499.00") == "₹1,499.00", extract_price("Total: ₹1,499.00")
         assert extract_price("Grand total: $450.00 with tax") == "$450.00", extract_price("Grand total: $450.00 with tax")
         assert extract_price("no money here") is None
