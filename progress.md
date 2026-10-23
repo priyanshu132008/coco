@@ -4,6 +4,8 @@
 
 Status: **done** — verified (tsc clean, next build clean, python smoke-test passed), pushed to main.
 
+- Remote schema applied via `supabase db query --file` (no migrations dir; CLI v2.117 has no `db execute`) on the linked project `tqiskhryqvakvmwghlrn`. Verified: `bot_credentials` exists, `tasks.bot_id bigint` exists, unique index `bot_credentials_token_hash_key` present, RLS enabled on `bot_credentials`.
+
 - New Supabase table `bot_credentials`: AES-256-GCM-encrypted `token`/`api_key` (same vault format, OI_VAULT_KEY), plaintext `token_hash` (sha256) for webhook lookup, resolved LiteLLM `model`, optional `api_base`. `tasks` gained `bot_id`.
 - Dashboard: new dynamic route `/api/telegram/webhook/[bot_token]` resolves the bot by token hash — no env reads; webhook POST body shared as `lib/webhook.ts::handleUpdate(chatId, text, botToken, botId, origin)`. Platform route now delegates to it (env token still works, and attaches bot_id when that bot is registered).
 - `/api/setup`: when Supabase is configured it now upserts into `bot_credentials` (encryption at rest, upsert on token_hash) and registers `setWebhook` on the per-bot URL. Without Supabase the old local `.env` path still runs.
