@@ -12,6 +12,7 @@ Status: **done** — verified (tsc clean, next build clean, python smoke-test pa
 - Worker (`tools/worker.py`): claims tasks with `bot_id`, loads + decrypts the bot row, injects `OI_MODEL` + the right provider key env (`OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` + `OPENAI_API_BASE`) into the runner, and relays through that bot's token (`worker_tg.*` now takes a token param; env token = fallback). Platform `TELEGRAM_BOT_TOKEN` env is no longer required for claiming.
 - `tools/byok.py`: `OI_MODEL` env override above config.json.
 - Before E2E test: run the new commands in `supabase/schema.sql` (create `bot_credentials`, add `tasks.bot_id`) in the Supabase SQL editor; `OI_VAULT_KEY` must be set on both Vercel and Render (already is for the vault).
+- Follow-up fix `d3ee882`: `/api/setup` hit `EROFS: read-only file system, open '/var/task/.env'` on Vercel — the local-.env fallback fired when Supabase env wasn't visible to the store check. Removed the file-write path entirely (`mergeEnv`/`applySetup` deleted from lib/setup.ts); the route now saves to `bot_credentials` exclusively and surfaces a clear error if Supabase env is missing.
 
 ## 2026-10-23 — Fix Vercel dashboard build (`Can't resolve '@openinstinct/core'`)
 
