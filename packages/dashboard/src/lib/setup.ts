@@ -23,20 +23,25 @@ export interface SetupInput {
   model?: string
 }
 
-/** The LiteLLM model string a provider submission resolves to. */
+/** Provider submission → the fields byok.py's config path expects, and the resolved
+ *  LiteLLM model string. byok.py passes "openai" models through verbatim and prefixes
+ *  everything else with the provider — so a custom gateway gets "openai/<form model>". */
 export function planSetup(input: SetupInput): { provider: string; active_model: string } {
   const p = PROVIDERS[input.provider]
-  return {
-    provider: p.provider,
-    // byok.py passes "openai" models through verbatim and prefixes everything else with
-    // the provider — so a custom gateway needs the "openai/" prefix to survive that step.
-    active_model:
-      p.provider === 'openai'
-        ? input.provider === 'custom'
-          ? `openai/${input.model || 'gpt-4o'}`
-          : p.model
-        : p.model,
-  }
+  const active_model =
+    p.provider === 'openai'
+      ? input.provider === 'custom'
+        ? `openai/${input.model || 'gpt-4o'}`
+        : p.model
+      : p.model
+  return { provider: p.provider, active_model }
+}
+
+/** The FULLY-qualified LiteLLM model string (e.g. "openrouter/auto") — consumed
+ *  verbatim when stored (bot_credentials.model → OI_MODEL → ChatLiteLLM). */
+export function resolveModel(input: SetupInput): string {
+  const { provider, active_model } = planSetup(input)
+  return provider === 'openai' ? active_model : `${provider}/${active_model}`
 }
 
 if (process.argv[1]?.endsWith('setup.ts')) {
@@ -46,11 +51,14 @@ if (process.argv[1]?.endsWith('setup.ts')) {
   const custom = planSetup({ token: 't', provider: 'custom', apiKey: 'k', baseUrl: 'http://x/v1', model: 'my-model' })
   if (custom.active_model !== 'openai/my-model') throw new Error('custom model not used')
   for (const p of Object.keys(PROVIDERS) as Provider[]) {
-    const { provider, active_model: model } = planSetup({ token: 't', provider: p, apiKey: 'k' })
-    // byok.py: provider "openai" passes the model through, everything else is prefixed
-    const resolved = provider === 'openai' ? model : `${provider}/${model}`
-    const hits = resolved.split('/').filter((part) => part === provider).length
+    // resolveModel is what gets STORED and used verbatim as OI_MODEL — it must already be
+    // a valid LiteLLM string: prefix present exactly once (bug this catches: a bare "auto"
+    // reaching ChatLiteLLM with no provider → instant model-not-found on the worker)
+    const resolved = resolveModel({ token: 't', provider: p, apiKey: 'k' })
+    if (!(resolved.startsWith(p + '/')) && !(p === 'openai' && resolved.startsWith('openai/'))) throw new Error(`${p}: unresolved model "${resolved}"`)
+    const hits = resolved.split('/').filter((part) => part === p).length
     if (hits > 1) throw new Error(`${p}: provider prefix repeated in "${resolved}"`)
   }
+  if (resolveModel({ token: 't', provider: 'openrouter', apiKey: 'k' }) !== 'openrouter/auto') throw new Error('openrouter auto unresolved')
   console.log('setup self-check OK (provider mapping)')
 }

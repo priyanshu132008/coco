@@ -2,7 +2,7 @@ import * as crypto from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { aesEncrypt } from '../../../lib/vault'
 import { sbUrl, sbKey, sbRemote } from '../../../lib/supabase'
-import { planSetup, type Provider } from '../../../lib/setup'
+import { resolveModel, type Provider } from '../../../lib/setup'
 
 const PROVIDERS: Provider[] = ['openrouter', 'openai', 'anthropic', 'custom']
 
@@ -16,12 +16,12 @@ async function botName(token: string): Promise<string> {
 }
 
 async function saveBot(input: { token: string; apiKey: string; baseUrl?: string; model?: string; provider: Provider }): Promise<void> {
-  const { active_model: modelStr } = planSetup(input)
+  const model = resolveModel(input)
   const body = {
     token: aesEncrypt(input.token),
     token_hash: crypto.createHash('sha256').update(input.token).digest('hex'),
     api_key: aesEncrypt(input.apiKey),
-    model: modelStr,
+    model: model,
     api_base: input.baseUrl || null,
   }
   const base = sbUrl().replace(/\/+$/, '')
