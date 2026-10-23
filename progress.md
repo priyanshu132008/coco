@@ -1,5 +1,13 @@
 # OpenInstinct — Progress
 
+## 2026-10-23 — Xvfb stale-lock crash on restart + hanging browser launch
+
+Status: **done** — pushed `0407250`.
+
+- Root cause: Render restarted the container in place at 15:35:09Z (no re-clone — same writable layer), so `/tmp/.X99-lock` survived → Xvfb refused display 99 → every browser launch hung forever.
+- entrypoint.sh: clears `/tmp/.X99-lock` + `/tmp/.X11-unix/X99` before start (exact paths — not the `.X*` glob, that would delete the `.X11-unix` directory), retries 3× with status prints, and a FATAL marker if the display never comes up.
+- browser_driver.py: `start_browser_session` wrapped in `asyncio.wait_for` (`OI_LAUNCH_TIMEOUT`, default 90s) — dead display fails the task loudly (stderr + `error` event → worker relays ❌ to the chat) instead of freezing.
+
 ## 2026-10-23 — E2E test debugging: stalled claim + /stop crash
 
 Status: **resolved** — task #2 claimed (`running`, pid 33) after the `0b3767e` worker deploy; model bug fixed in `e0a6c10` (DB row patched remotely).
