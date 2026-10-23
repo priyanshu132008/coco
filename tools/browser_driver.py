@@ -572,9 +572,23 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
 
     # gate loop: each run may stop at an OTP / location / checkout gate; handle it and re-attack
     # the remaining goal with the resolved asset — until a clean finish or a resource runs out
+    LAUNCH_TIMEOUT = float(os.environ.get("OI_LAUNCH_TIMEOUT", "90"))
     for _gate_round in range(4):
-        # launch here (not inside agent.run) so a profile-lock collision is retried, not fatal
-        await start_browser_session(session)
+        # launch here (not inside agent.run) so a profile-lock collision is retried, not fatal.
+        # Strict timeout: with a dead X display (Xvfb crash) Chrome hangs at launch forever —
+        # fail the task loudly instead of stalling the worker.
+        try:
+            await asyncio.wait_for(start_browser_session(session), timeout=LAUNCH_TIMEOUT)
+        except asyncio.TimeoutError:
+            traceback.print_exc()
+            emit({"type": "chat", "message": f"❌ Browser launch timed out after {LAUNCH_TIMEOUT:g}s (no display?). Task stopped."})
+            emit({"type": "error", "message": f"browser launch timeout after {LAUNCH_TIMEOUT:g}s"})
+            return 1
+        except Exception as e:
+            print(f"[driver] browser launch failed: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
+            emit({"type": "chat", "message": f"❌ Browser could not start: {e}. Task stopped."})
+            emit({"type": "error", "message": f"browser launch failed: {e}"})
+            return 1
         history = await agent.run(
             max_steps=max_steps or int(os.environ.get("OI_BU_MAX_STEPS", "25")),
             on_step_start=on_step_start,  # clear Cloudflare before the model sees the page
