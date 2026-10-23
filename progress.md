@@ -13,6 +13,7 @@ Status: **done** — verified (tsc clean, next build clean, python smoke-test pa
 - `tools/byok.py`: `OI_MODEL` env override above config.json.
 - Before E2E test: run the new commands in `supabase/schema.sql` (create `bot_credentials`, add `tasks.bot_id`) in the Supabase SQL editor; `OI_VAULT_KEY` must be set on both Vercel and Render (already is for the vault).
 - Follow-up fix `d3ee882`: `/api/setup` hit `EROFS: read-only file system, open '/var/task/.env'` on Vercel — the local-.env fallback fired when Supabase env wasn't visible to the store check. Removed the file-write path entirely (`mergeEnv`/`applySetup` deleted from lib/setup.ts); the route now saves to `bot_credentials` exclusively and surfaces a clear error if Supabase env is missing.
+- Root cause of that EROFS `2da3648`: env-name mismatch — Vercel had `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, code read `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`. All Supabase env reads now go through an alias resolver accepting both names (`lib/supabase.ts` in Node, `supabase_client.url()/key()` in Python; app-era names win when both are set). Verified: python alias check passed, tsc + next build clean, pushed to main.
 
 ## 2026-10-23 — Fix Vercel dashboard build (`Can't resolve '@openinstinct/core'`)
 
