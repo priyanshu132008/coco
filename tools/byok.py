@@ -11,7 +11,9 @@ CONFIG_PATH = os.environ.get("OI_CONFIG") or str(_ROOT / "config.json")
 
 
 def load_model_config(path: str = CONFIG_PATH) -> str:
-    """config.json → the LiteLLM model string."""
+    """Per-task override (OI_MODEL, set by worker.py from the bot's stored model) → config.json → the LiteLLM model string."""
+    if os.environ.get("OI_MODEL"):
+        return os.environ["OI_MODEL"]
     with open(path, encoding="utf-8") as f:
         cfg = json.load(f)
     model = cfg["active_model"]

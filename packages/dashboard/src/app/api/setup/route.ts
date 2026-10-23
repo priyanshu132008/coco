@@ -1,7 +1,12 @@
+import * as crypto from 'node:crypto'
 import { NextResponse } from 'next/server'
-import { applySetup, type Provider } from '../../../lib/setup'
+import { aesEncrypt } from '../../../lib/vault'
+import { applySetup, planSetup, type Provider } from '../../../lib/setup'
 
 const PROVIDERS: Provider[] = ['openrouter', 'openai', 'anthropic', 'custom']
+
+/** Supabase is the multi-tenant store; without it the local .env path keeps working. */
+const storeRemote = (): boolean => Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
 
 /** Read the bot's @username from a token — the setup page greets the user with it. */
 async function botName(token: string): Promise<string> {
@@ -10,6 +15,46 @@ async function botName(token: string): Promise<string> {
   const data = (await res.json()) as { ok?: boolean; result?: { username?: string }; description?: string }
   if (!data.ok || !data.result?.username) throw new Error(data.description || 'Telegram rejected that token.')
   return data.result.username
+}
+
+async function saveBot(input: { token: string; apiKey: string; baseUrl?: string; model?: string; provider: Provider }): Promise<void> {
+  const { config } = planSetup(input)
+  const body = {
+    token: aesEncrypt(input.token),
+    token_hash: crypto.createHash('sha256').update(input.token).digest('hex'),
+    api_key: aesEncrypt(input.apiKey),
+    model: config.active_model,
+    api_base: input.baseUrl || null,
+  }
+  const base = process.env.SUPABASE_URL!.replace(/\/+$/, '')
+  const key = process.env.SUPABASE_SERVICE_KEY!
+  const resp = await fetch(`${base}/rest/v1/bot_credentials`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      // upsert on the token_hash unique constraint — resubmitting the same bot updates it
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!resp.ok) throw new Error(`Could not save the bot credentials (Supabase ${resp.status}).`)
+}
+
+/** Point this bot's webhook at the dynamic per-bot route on this deployment. */
+async function registerWebhook(token: string, origin: string): Promise<void> {
+  const webhookUrl = `${origin.replace(/\/+$/, '')}/api/telegram/webhook/${encodeURIComponent(token)}`
+  await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      url: webhookUrl,
+      drop_pending_updates: true,
+      allowed_updates: ['message'],
+      ...(process.env.TELEGRAM_WEBHOOK_SECRET ? { secret_token: process.env.TELEGRAM_WEBHOOK_SECRET } : {}),
+    }),
+  }).catch(() => undefined) // registration failing mustn't fail setup — /api/telegram/webhook/setup can re-run
 }
 
 export async function POST(req: Request): Promise<NextResponse> {
@@ -34,7 +79,14 @@ export async function POST(req: Request): Promise<NextResponse> {
 
   try {
     const name = await botName(token)
-    applySetup({ token, provider, apiKey, baseUrl, model })
+    if (storeRemote()) {
+      // multi-tenant: encrypted row in Supabase + per-bot webhook registration
+      await saveBot({ token, apiKey, baseUrl, model, provider })
+      const origin = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get('host')}`
+      await registerWebhook(token, origin)
+    } else {
+      applySetup({ token, provider, apiKey, baseUrl, model })
+    }
     return NextResponse.json({ botName: name })
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : 'Setup failed.' }, { status: 502 })

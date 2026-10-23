@@ -111,8 +111,9 @@ async function sb<T = Record<string, unknown>>(
   return (await resp.json()) as T[]
 }
 
-/** AES-256-GCM over OI_VAULT_KEY (base64 of the 32 raw bytes the Fernet key wraps). */
-function aesEncrypt(plain: string): string {
+/** AES-256-GCM over OI_VAULT_KEY (base64 of the 32 raw bytes the Fernet key wraps).
+ *  The shared ciphertext format — vault saves, BYOK bot tokens and model keys. */
+export function aesEncrypt(plain: string): string {
   const keyB64 = process.env.OI_VAULT_KEY
   if (!keyB64) throw new Error('OI_VAULT_KEY missing — cannot encrypt vault fields')
   const key = Buffer.from(keyB64, 'base64').subarray(0, 32)

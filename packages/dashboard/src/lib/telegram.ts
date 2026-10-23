@@ -3,7 +3,10 @@
  *  The webhook INSERTs tasks with status 'pending'; a Python worker (tools/worker.py on
  *  Render) claims them, runs the agent and relays Telegram messages itself. Chat decisions
  *  (approve/deny/OTP/address/retry) route through task.gate set by the worker.
- *  Same PostgREST tables the Python side reads (supabase/schema.sql). */
+ *  Same PostgREST tables the Python side reads (supabase/schema.sql). Multi-tenant: each
+ *  update names its bot via the webhook URL — /api/telegram/webhook/[bot_token] — and the
+ *  task row carries that bot's id (bot_id), so two users' chats never collide. */
+import * as crypto from 'node:crypto'
 export const ROOT = process.cwd()
 
 /** One PostgREST call against SUPABASE_URL with the service key. */
@@ -47,6 +50,20 @@ export const isDeny = (text: string): boolean => DENY_RE.test(text)
 export const otpCode = (text: string): string | null => text.match(CODE_RE)?.[1] ?? null
 export const isRetry = (text: string): boolean => RETRY_RE.test(text)
 
+/** sha256 hex of a bot token — the lookup key bot_credentials.token_hash stores. */
+export function botTokenHash(token: string): string {
+  return crypto.createHash('sha256').update(token.trim()).digest('hex')
+}
+
+/** The bot row (id + model) for a plaintext token, via its hash — null when unregistered. */
+export async function botForToken(token: string): Promise<{ id: number } | null> {
+  const rows = await sb<{ id: number }>('GET', 'bot_credentials', {
+    filters: `token_hash=eq.${botTokenHash(token)}`,
+    select: 'id',
+  })
+  return rows[0] ?? null
+}
+
 async function tasksFor(chatId: string, filters: string): Promise<Record<string, unknown>[]> {
   return sb('GET', 'tasks', { filters: `phone_number=eq.${chatId}${filters ? `&${filters}` : ''}`, select: 'id,status,gate,gate_domain' })
 }
@@ -66,10 +83,11 @@ export async function stopActiveTasks(chatId: string): Promise<number> {
   return rows.length
 }
 
-/** The webhook's one job for a goal: INSERT pending — the worker on Render does the rest. */
-export async function createPendingTask(chatId: string, goal: string): Promise<number> {
+/** The webhook's one job for a goal: INSERT pending — the worker on Render does the rest.
+ *  bot_id ties the task to the bot the message arrived on (null = platform default bot). */
+export async function createPendingTask(chatId: string, goal: string, botId?: number | null): Promise<number> {
   const out = await sb('POST', 'tasks', {
-    body: { phone_number: chatId, goal, status: 'pending' },
+    body: { phone_number: chatId, goal, status: 'pending', ...(botId ? { bot_id: botId } : {}) },
     select: 'id',
     prefer: 'return=representation',
   })
@@ -109,9 +127,9 @@ export function publicUrl(): string | undefined {
 export const vaultUrl = (): string =>
   process.env.OI_VAULT_URL || (publicUrl() ? `${publicUrl()}/vault` : 'http://localhost:3000/vault')
 
-/** Best-effort reply — a failed sendMessage must never fail the webhook (Telegram redelivers). */
-export async function tg(method: string, body: Record<string, unknown>): Promise<void> {
-  const token = process.env.TELEGRAM_BOT_TOKEN
+/** Best-effort reply — a failed sendMessage must never fail the webhook (Telegram redelivers).
+ *  token: the sending bot's token (multi-tenant default is the platform env token). */
+export async function tg(method: string, body: Record<string, unknown>, token = process.env.TELEGRAM_BOT_TOKEN): Promise<void> {
   if (!token) return
   await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',

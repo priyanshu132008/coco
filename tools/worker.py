@@ -40,7 +40,7 @@ STATUS_BY_CODE = {0: "done", 130: "cancelled"}
 
 def claim_task() -> int | None:
     """Atomically claim the oldest pending task: PATCH pending→running only if still pending."""
-    rows = sbc.rows("tasks", "status=eq.pending&order=id.asc", select="id", limit=1)
+    rows = sbc.rows("tasks", "status=eq.pending&order=id.asc", select="id,bot_id", limit=1)
     if not rows:
         return None
     task_id = rows[0]["id"]
@@ -48,10 +48,42 @@ def claim_task() -> int | None:
     return task_id if claimed else None  # lost the race (another worker) — skip
 
 
-def spawn_runner(task_id: int) -> subprocess.Popen:
+def bot_for(task_id: int, bot_id: int | None) -> dict | None:
+    """The task's bot row, token/api_key already decrypted. bot_id null → no row → caller
+    falls back to the platform env (single-bot mode / self-checks)."""
+    if not bot_id:
+        return None
+    row = sbc.first("bot_credentials", f"id=eq.{bot_id}", select="token,api_key,model,api_base")
+    if not row:
+        return None
+    from tools.vault import _decrypt
+    return {
+        "token": _decrypt(str(row["token"])),
+        "api_key": _decrypt(row["api_key"]) if row.get("api_key") else None,
+        "model": str(row["model"] or ""),
+        "api_base": row.get("api_base") or None,
+    }
+
+
+def model_env(bot: dict | None) -> dict[str, str]:
+    """Per-task overrides for the runner: the bot's model and the right key env for it."""
+    if not (bot and bot["model"]):
+        return {}
+    env = {"OI_MODEL": bot["model"]}
+    key_var = ("ANTHROPIC_API_KEY" if bot["model"].startswith("anthropic/")
+               else "OPENROUTER_API_KEY" if bot["model"].startswith("openrouter/")
+               else "OPENAI_API_KEY")
+    if bot["api_key"]:
+        env[key_var] = bot["api_key"]
+    if bot["api_base"]:
+        env["OPENAI_API_BASE"] = bot["api_base"]
+    return env
+
+
+def spawn_runner(task_id: int, bot: dict | None) -> subprocess.Popen:
     child = subprocess.Popen(
         [RUNNER_PYTHON, DRIVER, "run", "--goal", _goal_text(task_id), "--task-id", str(task_id)],
-        cwd=str(_ROOT), env={**os.environ, "OI_AGENT_CLICK": "1"},
+        cwd=str(_ROOT), env={**os.environ, "OI_AGENT_CLICK": "1", **model_env(bot)},
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     sbc.update("tasks", f"id=eq.{task_id}", {"pid": child.pid})
@@ -79,9 +111,9 @@ def watch_cancellations(running: dict[int, subprocess.Popen]) -> None:
 class Relay(threading.Thread):
     """One per task: stream the driver's stdout JSON events to the chat; update status on close."""
 
-    def __init__(self, task_id: int, chat_id: str, child: subprocess.Popen):
+    def __init__(self, task_id: int, chat_id: str, child: subprocess.Popen, bot_token: str = ""):
         super().__init__(daemon=True)
-        self.task_id, self.chat_id, self.child = task_id, chat_id, child
+        self.task_id, self.chat_id, self.child, self.bot_token = task_id, chat_id, child, bot_token
 
     def run(self) -> None:
         assert self.child.stdout
@@ -104,9 +136,9 @@ class Relay(threading.Thread):
     def relay(self, ev: dict) -> None:
         kind = str(ev.get("type") or ev.get("event") or "")
         if kind == "chat" and ev.get("message"):
-            worker_tg.message(self.chat_id, str(ev["message"])[:4096])
+            worker_tg.message(self.chat_id, str(ev["message"])[:4096], token=self.bot_token)
         elif kind == "screenshot" and ev.get("path"):
-            worker_tg.photo(self.chat_id, ev["path"])
+            worker_tg.photo(self.chat_id, ev["path"], token=self.bot_token)
         elif kind in ("vault_required", "credentials"):
             self.gate("credentials", ev)
         elif kind == "location_required":
@@ -127,9 +159,9 @@ class Relay(threading.Thread):
         # the webhook routes approve/deny/otp/address/retry by looking at task.gate
         sbc.update("tasks", f"id=eq.{self.task_id}", {"gate": gate, "gate_domain": domain})
         if gate in ("credentials", "location", "card") and domain:
-            worker_tg.message(self.chat_id, text or f"🔐 {domain} needs setup. Open the Secure Vault:", keyboard=domain)
+            worker_tg.message(self.chat_id, text or f"🔐 {domain} needs setup. Open the Secure Vault:", keyboard=domain, token=self.bot_token)
         elif text:
-            worker_tg.message(self.chat_id, text)
+            worker_tg.message(self.chat_id, text, token=self.bot_token)
 
     def finish(self, code: int) -> None:
         current = (sbc.first("tasks", f"id=eq.{self.task_id}", select="status") or {}).get("status")
@@ -144,7 +176,7 @@ class Relay(threading.Thread):
             "done": "✅ Task #{0} finished.".format(self.task_id),
             "failed": "❌ Task #{0} failed.".format(self.task_id),
         }
-        worker_tg.message(self.chat_id, notices[status])
+        worker_tg.message(self.chat_id, notices[status], token=self.bot_token)
 
 
 # Update CloakBrowser and Render Port Sync — health thread + Supabase polling loop
@@ -189,12 +221,13 @@ def main() -> int:
     if not sbc.enabled():
         print("[worker] SUPABASE_URL / SUPABASE_SERVICE_KEY missing — healthcheck up, worker idle", file=sys.stderr)
     if not os.environ.get("TELEGRAM_BOT_TOKEN"):
-        print("[worker] TELEGRAM_BOT_TOKEN missing — healthcheck up, worker idle", file=sys.stderr)
+        # fine in multi-tenant mode: each task carries its bot's own token in the ledger
+        print("[worker] no platform TELEGRAM_BOT_TOKEN — tasks need a bot_credentials row", file=sys.stderr)
     print(f"[worker] polling Supabase every {POLL:g}s", flush=True)
     running: dict[int, subprocess.Popen] = {}
     while True:
         try:
-            if not (sbc.enabled() and os.environ.get("TELEGRAM_BOT_TOKEN")):
+            if not sbc.enabled():
                 time.sleep(POLL)  # misconfigured — stay up for the healthcheck, claim nothing
                 continue
             watch_cancellations(running)
@@ -203,11 +236,13 @@ def main() -> int:
                     running.pop(task_id)
             task_id = claim_task()
             if task_id and task_id not in running:
-                row = sbc.first("tasks", f"id=eq.{task_id}", select="phone_number")
-                child = spawn_runner(task_id)
+                task = sbc.first("tasks", f"id=eq.{task_id}", select="phone_number,bot_id")
+                bot = bot_for(task_id, (task or {}).get("bot_id"))
+                child = spawn_runner(task_id, bot)
                 running[task_id] = child
-                Relay(task_id, str((row or {}).get("phone_number") or ""), child).start()
-                print(f"[worker] claimed task {task_id} (pid {child.pid})", flush=True)
+                relay_token = (bot or {}).get("token") or os.environ.get("TELEGRAM_BOT_TOKEN") or ""
+                Relay(task_id, str((task or {}).get("phone_number") or ""), child, relay_token).start()
+                print(f"[worker] claimed task {task_id} (pid {child.pid}, bot_id {(task or {}).get('bot_id')})", flush=True)
         except Exception as e:
             print(f"[worker] loop error: {e}", file=sys.stderr, flush=True)
         time.sleep(POLL)
