@@ -73,7 +73,9 @@ def _fernet() -> Fernet:
 # encrypted by the dashboard/Mini App with node:crypto, no crypto SDK on Vercel). Readers
 # accept both, so a local key change never breaks older rows and TS↔Py stays compatible.
 def _aes_key() -> bytes:
-    return base64.b64decode(_get_key())
+    # OI_VAULT_KEY is a Fernet-format key: url-safe base64 (- / _) — node's base64 decoder
+    # accepts both alphabets, plain b64decode here would silently drop the url-safe chars
+    return base64.b64decode(_get_key(), altchars=b"-_")
 
 
 def _decrypt_aesgcm(blob: str) -> str:
