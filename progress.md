@@ -1,5 +1,12 @@
 # OpenInstinct — Progress
 
+## 2026-10-23 — E2E test debugging: stalled claim + /stop crash
+
+Status: fixes pushed (`0b3767e`), awaiting worker redeploy to confirm claim resume.
+
+- **/stop crash `Unexpected end of JSON input`** — root cause found and fixed: `lib/telegram.ts::sb()` parsed the JSON of a Supabase PATCH that answers **204 No Content** (no `prefer` body). Guard via `resp.text()` then parse-if-non-empty; covers `stopActiveTasks` and `decideGate`. Task rows themselves were already flipped correctly (task 1 shows `cancelled`) — only the HTTP response 500'd.
+- **Worker not claiming**: diagnosed via Render CLI (workspace `Cook's workspace`, service `srv-dbd2cft9fdbs73a9p52g` / openinstinct-1). Verified working: deployed commit is `978b069` (latest), env vars include `SUPABASE_URL`/`SUPABASE_SERVICE_KEY` (pointing at the migrated project) + `OI_VAULT_KEY`, task #2 sits `pending` with `bot_id=1`, and the exact claim SELECT + `bot_for` decrypt ran successfully locally with the worker's own credentials. The only silent path in the loop is the `enabled()` miss — so added explicit diagnostics (`0b3767e`): claim-skip reason print, typed loop errors, and a poll heartbeat logging the oldest pending id every 50 polls. Next deploy's logs will show which branch it actually takes.
+
 ## 2026-10-23 — Multi-tenant BYOK routing (dynamic webhooks + per-task keys)
 
 Status: **done** — verified (tsc clean, next build clean, python smoke-test passed), pushed to main.
