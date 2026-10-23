@@ -45,7 +45,10 @@ def claim_task() -> int | None:
         return None
     task_id = rows[0]["id"]
     claimed = sbc.update("tasks", f"id=eq.{task_id}&status=eq.pending", {"status": "running"}, select="id")
-    return task_id if claimed else None  # lost the race (another worker) — skip
+    if not claimed:
+        print(f"[worker] claim skipped task {task_id}: PATCH matched 0 rows (lost race or 'running' already taken)", file=sys.stderr, flush=True)
+        return None
+    return task_id
 
 
 def bot_for(task_id: int, bot_id: int | None) -> dict | None:
@@ -225,6 +228,7 @@ def main() -> int:
         print("[worker] no platform TELEGRAM_BOT_TOKEN — tasks need a bot_credentials row", file=sys.stderr)
     print(f"[worker] polling Supabase every {POLL:g}s", flush=True)
     running: dict[int, subprocess.Popen] = {}
+    poll = 0
     while True:
         try:
             if not sbc.enabled():
@@ -235,6 +239,12 @@ def main() -> int:
                 if child.poll() is not None:
                     running.pop(task_id)
             task_id = claim_task()
+            poll += 1
+            if poll % 50 == 0:
+                # heartbeat with the query result attached — a silent loop is indistinguishable
+                # from an idle one, and this pinpoints WHERE it stops noticing tasks
+                n = sbc.first("tasks", "status=eq.pending", select="id")
+                print(f"[worker] alive, poll #{poll}, oldest pending: {n['id'] if n else None}", flush=True)
             if task_id and task_id not in running:
                 task = sbc.first("tasks", f"id=eq.{task_id}", select="phone_number,bot_id")
                 bot = bot_for(task_id, (task or {}).get("bot_id"))
@@ -244,7 +254,7 @@ def main() -> int:
                 Relay(task_id, str((task or {}).get("phone_number") or ""), child, relay_token).start()
                 print(f"[worker] claimed task {task_id} (pid {child.pid}, bot_id {(task or {}).get('bot_id')})", flush=True)
         except Exception as e:
-            print(f"[worker] loop error: {e}", file=sys.stderr, flush=True)
+            print(f"[worker] loop error: {type(e).__name__}: {e}", file=sys.stderr, flush=True)
         time.sleep(POLL)
 
 

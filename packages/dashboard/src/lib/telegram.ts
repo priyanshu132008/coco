@@ -36,7 +36,10 @@ async function sb<T = Record<string, unknown>>(
     },
   )
   if (!resp.ok) throw new Error(`Supabase ${method} ${table} → ${resp.status}`)
-  return (await resp.json()) as T[]
+  // PATCH without return=representation answers 204 with an empty body — parsing that is
+  // what crashed /stop with "Unexpected end of JSON input"
+  const text = await resp.text()
+  return text ? (JSON.parse(text) as T[]) : []
 }
 
 const STOP_RE = /^\/?(stop|stoppp|cancel)[\s!.]*$/i
