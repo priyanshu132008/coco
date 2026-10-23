@@ -1,5 +1,25 @@
 # OpenInstinct — Progress
 
+## 2026-10-23 — Multi-tenant BYOK routing (dynamic webhooks + per-task keys)
+
+Status: **done** — verified (tsc clean, next build clean, python smoke-test passed), pushed to main.
+
+- New Supabase table `bot_credentials`: AES-256-GCM-encrypted `token`/`api_key` (same vault format, OI_VAULT_KEY), plaintext `token_hash` (sha256) for webhook lookup, resolved LiteLLM `model`, optional `api_base`. `tasks` gained `bot_id`.
+- Dashboard: new dynamic route `/api/telegram/webhook/[bot_token]` resolves the bot by token hash — no env reads; webhook POST body shared as `lib/webhook.ts::handleUpdate(chatId, text, botToken, botId, origin)`. Platform route now delegates to it (env token still works, and attaches bot_id when that bot is registered).
+- `/api/setup`: when Supabase is configured it now upserts into `bot_credentials` (encryption at rest, upsert on token_hash) and registers `setWebhook` on the per-bot URL. Without Supabase the old local `.env` path still runs.
+- Worker (`tools/worker.py`): claims tasks with `bot_id`, loads + decrypts the bot row, injects `OI_MODEL` + the right provider key env (`OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` + `OPENAI_API_BASE`) into the runner, and relays through that bot's token (`worker_tg.*` now takes a token param; env token = fallback). Platform `TELEGRAM_BOT_TOKEN` env is no longer required for claiming.
+- `tools/byok.py`: `OI_MODEL` env override above config.json.
+- Before E2E test: run the new commands in `supabase/schema.sql` (create `bot_credentials`, add `tasks.bot_id`) in the Supabase SQL editor; `OI_VAULT_KEY` must be set on both Vercel and Render (already is for the vault).
+
+## 2026-10-23 — Fix Vercel dashboard build (`Can't resolve '@openinstinct/core'`)
+
+Status: **done** — committed `142c2ba`, pushed to `main`.
+
+- Root cause: `@openinstinct/core` was missing from `packages/dashboard/package.json` dependencies, so Webpack couldn't resolve the workspace package at all.
+- Also: `packages/core/dist` is gitignored, so even after resolution Vercel would have failed on the missing `dist/index.js`. Added `prebuild` to dashboard's build script (`npm run build --workspace @openinstinct/core`) so core compiles before `next build`.
+- Skipped `transpilePackages` (as originally suggested): core ships prebuilt CJS `dist/`, so no transpiling needed — and it conflicts with the intentional `serverComponentsExternalPackages` config that keeps core's native/stealth chain out of the bundle.
+- Verified: wiped `packages/core/dist` locally, ran `npm run build` in packages/dashboard — full clean build passes.
+
 ## Phase 2 — Telegram Mini App (TMA) Vault
 
 Status: **done** — verified end to end.
@@ -228,3 +248,9 @@ Status: **done** — verified end to end.
   deploy goes green and the misconfig is visible in Render logs.
 - Idempotent binding via _HEALTH_SET; smoke-tested: / → 200 {"status":"alive"}, process
   alive through idle poll cycles. Committed a5ec2fe, pushed.
+
+## 2026-10-22 — Supabase schema applied (not committed, per instruction)
+- Render deploy went live (0cbb669). 401 → fixed by raw apikey (c1cf16a); then PGRST205
+  = schema never applied. Applied supabase/schema.sql via supabase CLI (db query --linked,
+  project tqiskhryqvakvmwghlrn); 5 tables verified (tasks/pending_codes/pending_locations/
+  retries/accounts), tasks queryable (0 rows). Worker loop errors should self-clear.
