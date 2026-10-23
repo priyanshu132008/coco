@@ -16,9 +16,19 @@ import requests
 _TIMEOUT = 15
 
 
+def url() -> str:
+    """SUPABASE_URL, or the Supabase-dashboard name NEXT_PUBLIC_SUPABASE_URL."""
+    return os.environ.get("SUPABASE_URL") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or ""
+
+
+def key() -> str:
+    """SUPABASE_SERVICE_KEY, or the dashboard name SUPABASE_SERVICE_ROLE_KEY."""
+    return os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
+
+
 def enabled() -> bool:
     """Read fresh each call — self-checks set/unset the env after import."""
-    return bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_KEY"))
+    return bool(url() and key())
 
 
 def rest(method: str, table: str, *, filters: str = "", select: str = "", body: Any = None,
@@ -30,7 +40,7 @@ def rest(method: str, table: str, *, filters: str = "", select: str = "", body: 
                with &select=id)
     body:      JSON payload for POST/PATCH
     """
-    url = f"{os.environ['SUPABASE_URL'].rstrip('/')}/rest/v1/{table}"
+    endpoint = f"{url().rstrip('/')}/rest/v1/{table}"
     params = []
     if filters:
         params.append(filters)
@@ -41,17 +51,17 @@ def rest(method: str, table: str, *, filters: str = "", select: str = "", body: 
     headers = {"Content-Type": "application/json"}
     if prefer:
         headers["Prefer"] = prefer
-    key = os.environ['SUPABASE_SERVICE_KEY']
+    service = key()
     # apikey takes the RAW key — a "Bearer" prefix there is a guaranteed 401
-    headers["apikey"] = key
-    headers["Authorization"] = f"Bearer {key}"
+    headers["apikey"] = service
+    headers["Authorization"] = f"Bearer {service}"
     resp = requests.request(
-        method, url, params="&".join(params) if params else None,
+        method, endpoint, params="&".join(params) if params else None,
         json=body, headers=headers, timeout=_TIMEOUT,
     )
     if resp.status_code >= 400:
         raise requests.HTTPError(
-            f"{resp.status_code} {resp.reason} for {url}: {resp.text[:200]}", response=resp
+            f"{resp.status_code} {resp.reason} for {endpoint}: {resp.text[:200]}", response=resp
         )
     if not resp.text:
         return []

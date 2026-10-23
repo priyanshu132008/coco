@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { aesEncrypt } from '../../../lib/vault'
+import { sbUrl, sbKey, sbRemote } from '../../../lib/supabase'
 import { planSetup, type Provider } from '../../../lib/setup'
 
 const PROVIDERS: Provider[] = ['openrouter', 'openai', 'anthropic', 'custom']
@@ -23,8 +24,8 @@ async function saveBot(input: { token: string; apiKey: string; baseUrl?: string;
     model: modelStr,
     api_base: input.baseUrl || null,
   }
-  const base = process.env.SUPABASE_URL!.replace(/\/+$/, '')
-  const key = process.env.SUPABASE_SERVICE_KEY!
+  const base = sbUrl().replace(/\/+$/, '')
+  const key = sbKey()
   const resp = await fetch(`${base}/rest/v1/bot_credentials`, {
     method: 'POST',
     headers: {
@@ -70,6 +71,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   if (!token) return NextResponse.json({ error: 'Telegram Bot Token is required.' }, { status: 400 })
   if (!provider) return NextResponse.json({ error: 'Pick a provider.' }, { status: 400 })
   if (!apiKey) return NextResponse.json({ error: 'API Key is required.' }, { status: 400 })
+  if (!sbRemote()) {
+    return NextResponse.json({ error: 'Supabase is not configured — set SUPABASE_URL and SUPABASE_SERVICE_KEY (or the dashboard names NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY).' }, { status: 503 })
+  }
   if (provider === 'custom' && !baseUrl) {
     return NextResponse.json({ error: 'Custom providers need a base URL.' }, { status: 400 })
   }

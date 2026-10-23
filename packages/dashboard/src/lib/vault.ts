@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { sbUrl, sbKey, sbRemote } from './supabase'
 
 /** Where the assistant's real configuration lives: the repo root's .env and vault.db.
  *  The dashboard runs from packages/dashboard, so the root is two levels up. */
@@ -85,15 +86,15 @@ async function sqlite(): Promise<typeof import('node:sqlite') | null> {
  *  nonce(12) || ciphertext || tag) is shared with tools/vault.py's `_decrypt` — locked
  *  by an embedded test vector on both sides. When Supabase is not configured the
  *  gateway-era local paths (tools/vault.py `put`, tasks.db) still run. */
-const remote = (): boolean => Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY)
+const remote = (): boolean => sbRemote()
 
 async function sb<T = Record<string, unknown>>(
   method: string,
   table: string,
   opts: { filters?: string; select?: string; body?: unknown } = {},
 ): Promise<T[]> {
-  const base = process.env.SUPABASE_URL!.replace(/\/+$/, '')
-  const key = process.env.SUPABASE_SERVICE_KEY!
+  const base = sbUrl().replace(/\/+$/, '')
+  const key = sbKey()
   const params: string[] = []
   if (opts.filters) params.push(opts.filters)
   if (opts.select) params.push(`select=${opts.select}`)

@@ -7,16 +7,17 @@
  *  update names its bot via the webhook URL — /api/telegram/webhook/[bot_token] — and the
  *  task row carries that bot's id (bot_id), so two users' chats never collide. */
 import * as crypto from 'node:crypto'
+import { sbUrl, sbKey } from './supabase'
 export const ROOT = process.cwd()
 
-/** One PostgREST call against SUPABASE_URL with the service key. */
+/** One PostgREST call against Supabase with the service key. */
 async function sb<T = Record<string, unknown>>(
   method: string,
   table: string,
   opts: { filters?: string; select?: string; body?: unknown; prefer?: string } = {},
 ): Promise<T[]> {
-  const base = process.env.SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_KEY
+  const base = sbUrl()
+  const key = sbKey()
   if (!base || !key) throw new Error('SUPABASE_URL / SUPABASE_SERVICE_KEY missing')
   const params: string[] = []
   if (opts.filters) params.push(opts.filters)
