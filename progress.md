@@ -312,3 +312,16 @@ Status: **done** — verified end to end.
   green + corrupt fixtures.
 - Checks green: py_compile all tools, tsc core + esbuild CLI build, vault/ledger/vault_server
   self-checks, health self-check, test_totp, node --check gateway.
+
+## 2026-10-25 — Rebrand + CLI completion audit (no fixes needed)
+- Verified `dist/coco.js` (bin entry from package.json) routes `start`/`configure`/`health`/`run`/`serve`/help;
+  rebuilt it, zero `openinstinct` references in the bundle.
+- Global scan for `OpenInstinct`/`openinstinct`/`OI_`: all remaining hits are the deliberate
+  legacy-compat env fallbacks (vault.py `_env()`, ledger.js, health.py) + progress.md history —
+  UI text (vault_server.py HTML) and schemas are clean; `.next` and `gateway.log` remnants are
+  untracked build/log artifacts. Deleted stale untracked `dist/openinstinct.js`.
+- Auto-open verified live: `coco configure` spawns tools/vault_server.py on 127.0.0.1:8081
+  (webbrowser.open via COCO_OPEN_BROWSER) and serves `/setup` → HTTP 200; `coco start` opens `/`
+  the same way, falling back to native `open` if the server was already up. No `open` npm package
+  needed — native platform opener + Python webbrowser cover it.
+- `coco health` runs green against the live .env/vault.db.
