@@ -5,7 +5,8 @@ CloakBrowser is launched first (persistent profile, binary-level fingerprint ste
 then browser-use attaches over CDP. Two-phase HitL: the agent pursues the goal but is
 instructed to STOP on any payment/checkout/purchase page (report the total) and on
 OTP/2FA fields (report the domain). The driver emits gateway events, waits on the
-ledger, and on approval issues a single-use Privacy card via sensitive_data to finish.
+ledger, and on approval pays with the vault card (when the goal explicitly asked for
+it and one is stored for the domain) or a single-use Privacy card via sensitive_data.
 
 Runs under .venv-bu (browser-use needs py>=3.11); the legacy SoM/pyautogui
 runner stays in the default .venv.
@@ -51,7 +52,7 @@ from tools.ledger_poll import (  # noqa: E402
     CODE_TIMEOUT,
     RETRY_TIMEOUT,
 )
-from tools.vault import get_address, has_domain, wait_for_domain  # noqa: E402
+from tools.vault import get_address, get_creds, has_domain, wait_for_domain  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT_URL_RE = re.compile(r"checkout|payment|place[-_ ]?order|confirm[-_ ]?(purchase|order)|billing|cart", re.I)
@@ -199,6 +200,30 @@ def extract_price(text: str) -> Optional[str]:
     m = PRICE_SYM_RE.search(t) or PRICE_WORD_RE.search(t)
     price = m.group(1) if m and m.groups() else m.group(0) if m else None
     return price.replace("\n", " ").strip() if price else None
+
+
+def card_for_payment(goal: str, domain: Optional[str], price: str):
+    """Approved payment source. The vault card when the goal explicitly asked to use it and a
+    full card (pan+cvv+expiry) is stored for the domain; otherwise a single-use privacy card
+    capped at price+10%. Returns (sensitive_data, human-readable source note)."""
+    if domain and re.search(r"\b(vault|saved card|stored card|use my card)\b", goal, re.I):
+        creds = get_creds(domain) or {}
+        if creds.get("pan") and creds.get("cvv") and creds.get("expiry"):
+            return (
+                {"card_number": creds["pan"], "cvv": creds["cvv"], "expiry": creds["expiry"]},
+                f"the vault card for {domain}",
+            )
+        print(f"[bu] vault card requested but none stored for {domain} — using the privacy card", file=sys.stderr)
+    from tools.payment import generate_virtual_card
+
+    if os.environ.get("COCO_FAKE_PRIVACY"):
+        card = {"pan": "4111111111111111", "cvv": "123", "exp_month": "09", "exp_year": "2027", "spend_limit": 0}
+    else:
+        card = generate_virtual_card(price)
+    return (
+        {"card_number": card["pan"], "cvv": card["cvv"], "expiry": f"{card['exp_month']}/{card['exp_year'][-2:]}"},
+        f"a virtual card capped at {card['spend_limit'] / 100:.2f} currency units",
+    )
 
 
 def target_domain(goal: str) -> Optional[str]:
@@ -570,9 +595,10 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             "If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
             "message must be exactly 'OTP_REQUIRED' (plus the site name) — NEVER guess, wait out, "
             "or bypass codes. If the site is missing an OTP field entirely, do NOT mention OTP at "
-            "all. If you reach a page for payment, checkout, or confirming a purchase, STOP there — "
-            "do NOT enter payment details, do NOT confirm or place the order — report the exact "
-            "total price instead. Everything before those points you may complete freely."
+            "all. If you reach a page for payment, checkout, or confirming a purchase, STOP there "
+            "and report the exact total price. Never enter payment details or confirm an order on "
+            "your own — the payment itself happens only after the human user approves it in chat. "
+            "Everything before that point you may complete freely."
             f"{CUSTOM_TOOL_RULE}"
         ),
         **common,
@@ -671,13 +697,10 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             emit({"type": "chat", "message": f"Checkout not approved ({verdict}) — stopped before payment, nothing was charged."})
             return 0
         # approved: single-use card capped at price+10%, handed to the agent as sensitive data
-        from tools.payment import generate_virtual_card
-
-        if os.environ.get("COCO_FAKE_PRIVACY"):
-            card = {"pan": "4111111111111111", "cvv": "123", "exp_month": "09", "exp_year": "2027", "spend_limit": 0}
-        else:
-            card = generate_virtual_card(price)
-        emit({"type": "chat", "message": f"Approved. Issued a virtual card capped at {card['spend_limit']/100:.2f} currency units — completing the purchase."})
+        # approved: pay — vault card if the goal explicitly asked for it and one is stored
+        # for this domain; otherwise a single-use privacy card capped at price+10%
+        sdata, card_note = card_for_payment(goal, domain, str(price))
+        emit({"type": "chat", "message": f"Approved. Paying with {card_note} — completing the purchase."})
         agent = Agent(
             task=(
                 "Complete the checkout/purchase on the current page. Type the card details into the "
@@ -685,11 +708,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
                 "re-open the checkout and finish it."
                 f"{CUSTOM_TOOL_RULE}"
             ),
-            sensitive_data={
-                "card_number": card["pan"],
-                "cvv": card["cvv"],
-                "expiry": f"{card['exp_month']}/{card['exp_year'][-2:]}",
-            },
+            sensitive_data=sdata,
             **common,
         )
         stop_on_pay = False  # paid now — the next round must not re-open the checkout gate
@@ -912,7 +931,31 @@ if __name__ == "__main__":
             assert json.dumps(BLOCKED_TEXT_RE.pattern) in CAPTCHA_PROBE_JS, "probe JS and python regex drifted"
 
         asyncio.run(_captcha_checks())
-        print("[bu] self-check ok — price/checkout/otp/domain/vault-regex + config + profile-lock + captcha", file=sys.stderr)
+
+        # card_for_payment: goal without a vault request → privacy card; explicit request +
+        # stored card (throwaway vault DB) → the vault's details; request with no stored
+        # card → privacy fallback. COCO_FAKE_PRIVACY keeps the privacy branch offline.
+        os.environ["COCO_FAKE_PRIVACY"] = "1"
+        try:
+            _sd, _note = card_for_payment("buy 1kg rice on flipkart.com", "flipkart.com", "₹100")
+            assert "virtual card" in _note, _note
+            _sd2, _note2 = card_for_payment("pay with my saved card on flipkart.com", "flipkart.com", "₹100")
+            assert "virtual card" in _note2, _note2  # nothing stored → fallback
+            import tempfile as _vt
+
+            os.environ["COCO_ENV_PATH"] = _vt.mkstemp(prefix="vkey-")[1]
+            os.environ["COCO_VAULT_DB"] = _vt.mkstemp(prefix="vdb-")[1]
+            from tools import vault as _vault
+
+            _vault.add_creds("flipkart.com", {"pan": "5555444433331111", "cvv": "124", "expiry": "11/29"})
+            _sd3, _note3 = card_for_payment("pay from my vault on flipkart.com", "flipkart.com", "₹100")
+            assert _sd3["card_number"] == "5555444433331111" and "vault card" in _note3, _note3
+            assert card_for_payment("buy 1kg rice", "flipkart.com", "₹100")[1].count("5") == 0, "quiet goal must stay on the privacy card"
+        finally:
+            for _k in ("COCO_FAKE_PRIVACY", "COCO_ENV_PATH", "COCO_VAULT_DB"):
+                os.environ.pop(_k, None)
+
+        print("[bu] self-check ok — price/checkout/otp/domain/vault-regex + config + profile-lock + captcha + card-source", file=sys.stderr)
         sys.exit(0)
     if args.mode == "run" and args.goal:
         try:

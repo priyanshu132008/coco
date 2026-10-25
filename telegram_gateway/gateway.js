@@ -390,7 +390,7 @@ function spawnRunner(taskId, goal, chatId) {
         pending.set(chatId, taskId);
         const price = ev.price ? ev.price : "";
         bot.api
-          .sendMessage(chatId, `Checkout reached. Total: ${price || "?"}\nReply "approve" to execute payment, "deny" to cancel.`)
+          .sendMessage(chatId, `Checkout reached. Total: ${price || "?"}\nShould I pay? Reply "approve" to pay, "deny" to cancel.`)
           .catch((e) => console.error("[gateway] approval msg failed:", e.message));
       } else if (ev.type === "vault_required" || ev.type === "credentials") {
         bot.api

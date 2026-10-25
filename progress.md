@@ -424,3 +424,16 @@ Status: **done** — verified end to end.
   report failure". (Skipped the payment-resume agent — single form page, no scrolling.)
 - test_router.js: live 2-turn self-check (vague greeting → chat reply; concrete goal →
   dispatch_browser tool call). Verified green against the configured model.
+
+## 2026-10-25 — Approved-payment path: vault cards + "Should I pay?"
+- browser_driver.py: the checkout rule no longer reads as a hard payment ban — the agent
+  must STOP at any payment/checkout page and report the total; payment happens only after
+  the human approves in chat ("Should I pay?" gateway message, now with that wording).
+  New card_for_payment(goal, domain, price): if the goal explicitly asks to use the
+  vault/saved card AND a full pan+cvv+expiry is stored for the domain, the payment agent
+  enters those vault credentials as sensitive_data; otherwise it still pays with the
+  single-use privacy card capped at price+10% (COCO_FAKE_PRIVACY branch unchanged).
+- --check extended: vault request w/o stored card → privacy fallback; stored card → vault
+  details returned; quiet goal → privacy card. Green.
+- Live e2e payments were NOT run in this session (money path) — flagged for a real
+  sandbox test before trusting it.
