@@ -125,18 +125,32 @@ async function serveOrOpen(path: string): Promise<void> {
   openBrowser(DASHBOARD + path)
 }
 
+/** Run the long-polling gateway. The gateway exits 3 when /api/setup changed the bot token
+ *  in .env — respawn it so the new token takes effect without restarting the dashboard.
+ *  An inherited TELEGRAM_BOT_TOKEN would beat dotenv's no-override load, so strip it and
+ *  let the gateway read .env fresh every boot. */
+function spawnGateway(): void {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { TELEGRAM_BOT_TOKEN, ...rest } = process.env
+  const gw = spawn('node', [join(ROOT, 'telegram_gateway/gateway.js')], {
+    cwd: ROOT, stdio: 'inherit', env: { ...rest, BROWSER: 'none' }, // the CLI opens the dashboard, never Next
+  })
+  gw.on('exit', (code) => {
+    if (code === 3) {
+      console.log('▸ .env updated — gateway restarted with the new bot token')
+      spawnGateway()
+      return
+    }
+    if (code) console.error(`✖ gateway exited (${code}) — check TELEGRAM_BOT_TOKEN in .env`)
+    process.exitCode = code ?? 1
+  })
+}
+
 async function startCommand(): Promise<void> {
   console.log('  ⚡ Coco v0.1.0 — local stack')
   await serveOrOpen('/')
   console.log(`▸ dashboard/vault: ${DASHBOARD}/  (setup: ${DASHBOARD}/setup)`)
-  const gw = spawn('node', [join(ROOT, 'telegram_gateway/gateway.js')], {
-    cwd: ROOT, stdio: 'inherit',
-    env: { ...process.env, BROWSER: 'none' }, // the CLI opens the dashboard, never Next
-  })
-  gw.on('exit', (code) => {
-    if (code) console.error(`✖ gateway exited (${code}) — check TELEGRAM_BOT_TOKEN in .env`)
-    process.exitCode = code ?? 1
-  })
+  spawnGateway()
 }
 
 async function runCommand(prompt: string): Promise<void> {

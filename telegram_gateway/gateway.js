@@ -4,6 +4,7 @@
  *  approval asks / 2FA code asks back to the chat, decisions back into the ledger. */
 const { Bot, InputFile } = require("grammy");
 const { spawn } = require("child_process");
+const fs = require("fs");
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, "..", ".env") }); // same .env the Python side uses
 const ledger = require("./ledger");
@@ -367,5 +368,26 @@ function spawnRunner(taskId, goal, chatId) {
 // The vault form lives in the Next dashboard (packages/dashboard /vault → /api/vault/submit
 // → tools/vault.py). coco start brings it up; if the dashboard is down the vault button
 // just fails to open a page — long polling keeps running.
+
+// /api/setup (or a hand edit) can change TELEGRAM_BOT_TOKEN while we poll, but dotenv
+// already ran — this process would poll the old bot forever. On a token change exit(3):
+// `coco start` respawns us with the new token, launchd KeepAlive does the same.
+const ENV_FILE = path.join(__dirname, "..", ".env");
+let currentToken = process.env.TELEGRAM_BOT_TOKEN;
+fs.watch(ENV_FILE, () => {
+  const tok = /^TELEGRAM_BOT_TOKEN=(.*)$/m.exec(fs.readFileSync(ENV_FILE, "utf8"));
+  if (tok && tok[1].trim() && tok[1].trim() !== currentToken) {
+    console.log("[gateway] .env changed — restarting for the new bot token…");
+    process.exit(3);
+  }
+});
+
+// A token moved off a cloud deploy keeps its old setWebhook — getUpdates then fails with
+// "webhook is active" until it's dropped. Always clear it before long polling.
+bot.api
+  .deleteWebhook()
+  .then(() => console.log("[gateway] webhook cleared — long polling fresh"))
+  .catch((e) => console.error("[gateway] deleteWebhook failed — a cloud webhook may still block polling:", e.message));
+
 bot.start(); // long polling — no webhook, no public host needed
 console.log("[gateway] Telegram bot polling started");

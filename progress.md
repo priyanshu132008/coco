@@ -355,3 +355,14 @@ Status: **done** — verified end to end.
 - PY, packages/dashboard, telegram_gateway, next bin and core build all derive from ROOT:
   one fix covers every path. Verified via symlink from a foreign cwd (health green, real
   .env found), direct run from the repo (green), and a copied skeleton (fails loudly).
+
+## 2026-10-25 — Gateway lifecycle: .env hot-reload + stale-webhook clearing
+- gateway.js watches .env: a TELEGRAM_BOT_TOKEN change (e.g. /api/setup while polling)
+  exits(3); `coco start` respawns the gateway on exit code 3 (launchd KeepAlive covers the
+  daemon path). The CLI strips inherited TELEGRAM_BOT_TOKEN from the spawn env so dotenv's
+  no-override load can't resurrect a stale shell value.
+- gateway.js calls deleteWebhook before bot.start(): a token previously deployed on a cloud
+  webhook blocks getUpdates until the webhook is dropped.
+- Fixed com.coco.gateway.plist still pointing at the old openinstinct/ paths.
+- Verified live: coco start → "webhook cleared" + polling; sed-swapping the token in .env
+  → ".env changed — restarting" → CLI respawn → polling again; .env restored byte-identical.
