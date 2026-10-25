@@ -6,15 +6,16 @@ import { spawn } from 'child_process'
 const HELP = `
   ⚡ Coco v0.1.0 — local AI browser agent
   ──────────────────────────────────────────────────────
-  coco start            launch the local stack: dashboard on http://127.0.0.1:8081
-                        (vault + key setup UI, opened in your browser) and the
-                        Telegram bot (long polling — no public IP or tunnels needed)
+  coco start            launch the local stack: the Next.js dashboard on
+                        http://localhost:3000 (setup + vault UI, opened in your
+                        browser) and the Telegram bot (long polling — no public
+                        IP or tunnels needed)
   coco configure        open the key-setup page (LLM provider key, bot token)
   coco health           check .env, vault key, SQLite files and keys; prints fixes
   coco run "<prompt>"    attach to your real Chrome (CDP :9222), run the model loop,
                          stream live frames to ws://localhost:8080
-  coco serve             legacy EXECUTE_INTENT bridge on :8080
-  coco help              this message
+  coco serve            legacy EXECUTE_INTENT bridge on :8080
+  coco help             this message
 `
 
 const args = process.argv.slice(2)
@@ -23,15 +24,64 @@ const cmd = args[0] ?? 'help'
 // Repo root — the python venvs and the gateway live there (this binary is built to <root>/dist).
 const ROOT = process.env.COCO_HOME || join(dirname(process.argv[1]), '..')
 const PY = process.env.COCO_VAULT_PYTHON || '.venv-bu/bin/python'
-const DASHBOARD = 'http://127.0.0.1:8081'
+const DASHBOARD = 'http://localhost:3000'
+const DASHBOARD_DIR = join(ROOT, 'packages', 'dashboard')
 
-// Start the dashboard if nothing is listening on :8081, then open the URL.
-// Fresh instance → vault_server auto-opens via webbrowser (COCO_OPEN_BROWSER);
-// already-running → open from here.
-async function serveOrOpen(path: string): Promise<void> {
-  const up = await new Promise<boolean>((resolve) => {
+/** Spawn the Next.js dashboard (next dev on :3000) and resolve once it answers HTTP. */
+async function ensureDashboard(): Promise<void> {
+  if (await isUp(DASHBOARD)) return
+  // deps pruned by a workspace install while the app was deleted → restore before next
+  if (!joinFileSync(DASHBOARD_DIR, 'node_modules', 'next') && !joinFileSync(ROOT, 'node_modules', 'next')) {
+    console.log('▸ installing dashboard dependencies (first run)…')
+    require('child_process').spawnSync('npm', ['install', '--no-audit', '--no-fund'], { cwd: ROOT, stdio: 'inherit' })
+  }
+  const nextBin = joinFileSync(DASHBOARD_DIR, 'node_modules', 'next', 'dist', 'bin', 'next')
+    || joinFileSync(ROOT, 'node_modules', 'next', 'dist', 'bin', 'next')
+  if (!nextBin) {
+    console.error(`✖ next not found — run "npm install" in ${ROOT}`)
+    process.exitCode = 1
+    return
+  }
+  if (!joinFileSync(ROOT, 'packages', 'core', 'dist', 'index.js')) {
+    console.log('▸ building @coco/core (first run)…')
+    require('child_process').spawnSync('npm', ['run', 'build:core'], { cwd: ROOT, stdio: 'inherit' })
+  }
+  const next = spawn(process.execPath, [nextBin, 'dev', '-p', '3000'], {
+    cwd: DASHBOARD_DIR,
+    env: { ...process.env, BROWSER: 'none' }, // next may try to auto-open — the CLI opens below
+    stdio: 'inherit',
+    detached: true,
+  })
+  next.on('error', () => {
+    console.error(`✖ could not start the dashboard — run "npm install" in ${DASHBOARD_DIR}`)
+    process.exitCode = 1
+  })
+  // next dev compiles pages on first hit — until :3000 answers, nothing to show yet
+  for (let i = 0; i < 90; i += 1) {
+    await new Promise((r) => setTimeout(r, 1000))
+    if (await isUp(DASHBOARD)) {
+      console.log(`▸ dashboard ready: ${DASHBOARD}`)
+      return
+    }
+  }
+  console.error('✖ dashboard did not come up on :3000 within 90s — check its output above')
+  process.exitCode = 1
+}
+
+const joinFileSync = (...parts: string[]): string => {
+  try {
+    require('fs').accessSync(require('path').join(...parts))
+    return join(...parts)
+  } catch {
+    return ''
+  }
+}
+
+/** True when something answers on `base` (any HTTP response counts, 404s included). */
+async function isUp(base: string): Promise<boolean> {
+  return new Promise((resolve) => {
     import('http').then(({ get }) => {
-      const req = get(DASHBOARD + path, (r) => {
+      const req = get(base, (r) => {
         r.resume()
         resolve(true)
       })
@@ -39,18 +89,20 @@ async function serveOrOpen(path: string): Promise<void> {
       req.setTimeout(800, () => { req.destroy(); resolve(false) })
     })
   })
-  if (!up) {
-    spawn(join(ROOT, PY), [join(ROOT, 'tools/vault_server.py')], {
-      stdio: 'ignore', cwd: ROOT,
-      env: { ...process.env, COCO_OPEN_BROWSER: '1' },
-    })
-    await new Promise((r) => setTimeout(r, 1500))
-  } else {
-    const url = `${DASHBOARD}${path}`
-    const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
-    spawn(opener, [url], { shell: process.platform === 'win32' })
-      .on('error', () => console.log(`▸ open ${url} manually in your browser`))
-  }
+}
+
+/** Open a browser tab — native opener, the npm `open` package carries no weight here. */
+function openBrowser(url: string): void {
+  const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open'
+  spawn(opener, [url], { shell: process.platform === 'win32' })
+    .on('error', () => console.log(`▸ open ${url} manually in your browser`))
+}
+
+// Bring the dashboard up if needed, then open `path` in the browser.
+async function serveOrOpen(path: string): Promise<void> {
+  await ensureDashboard()
+  if (process.exitCode) return // dashboard failed to boot — don't open a dead URL
+  openBrowser(DASHBOARD + path)
 }
 
 async function startCommand(): Promise<void> {
@@ -59,7 +111,7 @@ async function startCommand(): Promise<void> {
   console.log(`▸ dashboard/vault: ${DASHBOARD}/  (setup: ${DASHBOARD}/setup)`)
   const gw = spawn('node', [join(ROOT, 'telegram_gateway/gateway.js')], {
     cwd: ROOT, stdio: 'inherit',
-    env: { ...process.env, COCO_OPEN_BROWSER: '' }, // daemon-spawned UI never pops a browser
+    env: { ...process.env, BROWSER: 'none' }, // the CLI opens the dashboard, never Next
   })
   gw.on('exit', (code) => {
     if (code) console.error(`✖ gateway exited (${code}) — check TELEGRAM_BOT_TOKEN in .env`)

@@ -325,3 +325,24 @@ Status: **done** — verified end to end.
   the same way, falling back to native `open` if the server was already up. No `open` npm package
   needed — native platform opener + Python webbrowser cover it.
 - `coco health` runs green against the live .env/vault.db.
+
+## 2026-10-25 — Restore the Next.js dashboard as the local UI
+- Restored packages/dashboard from the pre-deletion commit (e0a6c10) and converted it
+  local-first: /api/setup now writes the root .env (TELEGRAM_BOT_TOKEN + provider key,
+  custom → OPENAI_API_KEY + OPENAI_API_BASE) and config.json (provider + bare active_model
+  for byok.py) via new lib/env.ts + lib/configJson.ts. Deleted the hosted path entirely:
+  lib/supabase.ts, lib/telegram.ts, lib/webhook.ts, src/app/api/telegram/* (long polling in
+  gateway.js), and lib/vault.ts's Supabase/AES branch (local: tools/vault.py `put` → Fernet
+  → vault.db; location relay stays on the tasks.db ledger via node:sqlite).
+- Rebranded all pages/layout/metadata OpenInstinct → Coco; workspace renamed @coco/dashboard;
+  env names OI_* → COCO_* (COCO_ROOT = data dir, COCO_CODE = install dir — vault.py takes
+  COCO_VAULT_DB/COCO_ENV_PATH, translated at the spawn).
+- gateway.js: vault button now opens the Next /vault page on :3000 (same ?domain=&gate=
+  params); the vault_server.py spawn is gone and tools/vault_server.py deleted.
+- CLI (coco start/configure): spawns next dev on :3000 (next resolved from the dashboard's
+  or root node_modules; first-run guards for npm install + core build), waits for :3000 to
+  answer HTTP (next compiles pages lazily), then opens / or /setup natively.
+- Verified live: coco start → :3000 200 (/, /setup, /vault), /api/setup with the real bot
+  token validated via getMe and wrote .env+config.json into a sandbox COCO_ROOT (real .env
+  untouched), /api/vault/submit round-tripped through vault.db and decrypted back.
+- Self-checks green: env/configJson/vault/setup (esbuild+node), tsc clean.

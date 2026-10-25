@@ -20,8 +20,8 @@ const DENY_RE = /^(no|deny|denied)\b/i; // "cancel"/"stop" moved to STOP_RE — 
 const STOP_RE = /^\/?(stop|stoppp|cancel)[\s!.]*$/i;
 const CODE_RE = /^\s*(?:otp\s*)?(\d{6})\s*$/i; // "123456" or "otp 123456"
 const RETRY_RE = /^\/?(retry|again|resume)\b/i; // after a Cloudflare pause
-//: The local vault UI (tools/vault_server.py, spawned below) serves the credential form.
-const VAULT_URL = process.env.COCO_VAULT_URL || "http://127.0.0.1:8081/vault/fill";
+//: The vault form lives in the Next dashboard (/vault in packages/dashboard).
+const VAULT_URL = process.env.COCO_VAULT_URL || "http://127.0.0.1:3000/vault";
 //: How long to wait for a SIGINT'ed runner to release the browser profile lock.
 const SHUTDOWN_TIMEOUT = Number(process.env.COCO_SHUTDOWN_TIMEOUT || 15000);
 
@@ -364,13 +364,8 @@ function spawnRunner(taskId, goal, chatId) {
   return child;
 }
 
-// Vault web UI on :8081 (mobile form in front of the encrypted vault) — best effort:
-// it fails quietly if port 8081 is taken (e.g. an existing server or daemon already runs it)
-spawn(
-  process.env.COCO_VAULT_PYTHON || path.join(__dirname, "..", ".venv-bu", "bin", "python"),
-  [path.join(__dirname, "..", "tools", "vault_server.py")],
-  { cwd: path.join(__dirname, ".."), detached: true, stdio: "ignore" }
-).unref();
-
+// The vault form lives in the Next dashboard (packages/dashboard /vault → /api/vault/submit
+// → tools/vault.py). coco start brings it up; if the dashboard is down the vault button
+// just fails to open a page — long polling keeps running.
 bot.start(); // long polling — no webhook, no public host needed
 console.log("[gateway] Telegram bot polling started");
