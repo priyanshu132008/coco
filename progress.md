@@ -346,3 +346,12 @@ Status: **done** — verified end to end.
   token validated via getMe and wrote .env+config.json into a sandbox COCO_ROOT (real .env
   untouched), /api/vault/submit round-tripped through vault.db and decrypted back.
 - Self-checks green: env/configJson/vault/setup (esbuild+node), tsc clean.
+
+## 2026-10-25 — CLI repo-root resolution through global-bin symlinks
+- /opt/homebrew/bin/coco → dirname(argv[1]) resolved ROOT to /opt/homebrew. Now repoRoot():
+  COCO_HOME wins, else fs.realpathSync(argv[1]) traces a symlinked binary back to the
+  codebase, and a copied global install falls back to process.cwd(). Both candidates must
+  contain tools/health.py — otherwise: loud "run from the repo or set COCO_HOME" + exit 1.
+- PY, packages/dashboard, telegram_gateway, next bin and core build all derive from ROOT:
+  one fix covers every path. Verified via symlink from a foreign cwd (health green, real
+  .env found), direct run from the repo (green), and a copied skeleton (fails loudly).

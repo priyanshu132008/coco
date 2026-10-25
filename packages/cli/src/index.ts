@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { CdpEngineLoop, WebSocketBridge } from '@coco/core'
 import { dirname, join } from 'path'
+import { existsSync, realpathSync } from 'fs'
 import { spawn } from 'child_process'
 
 const HELP = `
@@ -21,8 +22,27 @@ const HELP = `
 const args = process.argv.slice(2)
 const cmd = args[0] ?? 'help'
 
+/** The repo root holding tools/, telegram_gateway/ and packages/dashboard/.
+ *  A global install (e.g. /opt/homebrew/bin/coco) symlinks the binary — realpath traces
+ *  it back to the codebase; `npm i -g .` copies instead, so when the traced root is a
+ *  package skeleton without the tools, fall back to where the user invoked it from. */
+function repoRoot(): string {
+  if (process.env.COCO_HOME) return process.env.COCO_HOME
+  let fromBin: string | null = join(dirname(process.argv[1]), '..')
+  try {
+    fromBin = join(dirname(realpathSync(process.argv[1])), '..')
+  } catch {
+    // argv[1] missing/not a path (eval'ed) → cwd below
+  }
+  for (const candidate of [fromBin, process.cwd()]) {
+    if (existsSync(join(candidate, 'tools', 'health.py'))) return candidate
+  }
+  console.error('✖ Coco code not found — run coco from the cloned repo, or set COCO_HOME to it.')
+  process.exit(1)
+}
+
 // Repo root — the python venvs and the gateway live there (this binary is built to <root>/dist).
-const ROOT = process.env.COCO_HOME || join(dirname(process.argv[1]), '..')
+const ROOT = repoRoot()
 const PY = process.env.COCO_VAULT_PYTHON || '.venv-bu/bin/python'
 const DASHBOARD = 'http://localhost:3000'
 const DASHBOARD_DIR = join(ROOT, 'packages', 'dashboard')
