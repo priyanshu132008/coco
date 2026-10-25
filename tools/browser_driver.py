@@ -685,6 +685,29 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
         )
         stop_on_pay = False  # paid now — the next round must not re-open the checkout gate
 
+    # A segment that ended without the agent's own done marker means it gave up: consecutive
+    # LLM failures (402/rate limit), provider errors, or max steps exhausted. Placed AFTER the
+    # segment gates above — they exit via continue and would also read as "unsuccessful" here.
+    completed = history.is_successful()
+    llm_errors = [str(e) for e in history.errors() if e]
+    if completed is not True:
+        provider_hit = any(re.search(r"40[129]|rate.?limit|insufficient|quota|credit", e, re.I) for e in llm_errors)
+        detail = (
+            "LLM provider error (402/rate limit) — consecutive calls failed."
+            if provider_hit
+            else llm_errors[-1].strip()[:300]
+            if llm_errors
+            else f"agent stopped without completing the goal ({history.number_of_steps} steps, no final result)"
+        )
+        try:
+            emit_frame("failed", await session.take_screenshot(format="png"), task_id)
+        except Exception:
+            emit_frame("failed", next(iter(last_frame), None), task_id)
+        await session.stop()
+        # one failure message — the gateway's 'error' handler renders "❌ Task #N failed: <msg>"
+        emit({"type": "error", "message": detail})
+        return 3
+
     try:
         emit_frame("done", await session.take_screenshot(format="png"), task_id)
     except Exception:

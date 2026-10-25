@@ -382,3 +382,16 @@ Status: **done** — verified end to end.
   'done'); coco stop killed the running gateway cleanly. Timeout-kill observation window
   (waiting >5 min on a deliberately hung task) not exercised live — COCO_TASK_TIMEOUT env
   override is the knob for a quick manual check.
+
+## 2026-10-25 — Runner failure propagation (no more green "Done." on agent abort)
+- browser_driver.py: after agent.run(), the terminal path now evaluates
+  history.is_successful(): only a True verdict reaches the old "Done." + exit 0. An agent
+  that gave up (consecutive LLM failures, 402/ratelimit/auth, or max steps with no final
+  result) emits the structured 'error' event (gateway renders "❌ Task #N failed: …"),
+  marks tasks.db 'failed' via a nonzero exit (3), and saves a "failed" screenshot. Detection
+  sits AFTER the OTP/address/checkout gates (those exit via continue) so their endings
+  can't be misread as task failures.
+- Verified live: garbage OpenRouter key + 2 steps → agent aborts with AuthenticationError
+  401 spam → emits error event, exits 3, no "Done."; py_compile + --check self-check green.
+  (The success path with a credited LLM key wasn't re-run — 402'd account; the only new
+  gate before "Done." is the is_successful() check.)
