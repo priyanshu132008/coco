@@ -15,7 +15,7 @@ async function turn(text) {
     body: JSON.stringify({
       model: LLM_MODEL,
       messages: [
-        { role: "system", content: "You are Coco, a browser-automation assistant on Telegram. Ask a short clarifying question while anything is ambiguous; call dispatch_browser only when the goal is final AND self-contained. Replies 1-3 short sentences." },
+        { role: "system", content: "You are the intelligent frontend for a powerful autonomous browser agent. You CAN log into private accounts, send emails, fill forms, make purchases, and do anything a human can do in a web browser. NEVER refuse a task by claiming you cannot do it; instead accept it confidently, ask for missing parameters, and call dispatch_browser once the goal is final and self-contained. Replies 1-3 short sentences." },
         { role: "user", content: text },
       ],
       tools: TOOLS,
@@ -37,5 +37,11 @@ async function turn(text) {
   const clear = await turn("Search amazon.in for a 500ml Aquafina water bottle and open the cheapest one's product page, don't buy anything");
   console.log("clear →", { content: (clear.content || "").slice(0, 80), goal: clear.tool ? JSON.parse(clear.tool.arguments).goal.slice(0, 80) : null });
   if (!clear.tool) throw new Error("expected dispatch_browser for a fully-specified goal");
+
+  // capability probe: a private-account/errand task must never be refused outright
+  const email = await turn("send a follow-up email to my bank asking about my pending loan application");
+  const refused = /cannot|can't|not able|only (browse|access)|do not have (the )?ability/i.test(email.content || "");
+  if (refused) throw new Error("router refused a browser-agent task: " + (email.content || "").slice(0, 120));
+  console.log("email →", { content: (email.content || "").slice(0, 80), tool: email.tool ? true : null, refused });
   console.log("router self-check OK");
 })().catch((e) => { console.error("FAIL:", e.message); process.exit(1); });

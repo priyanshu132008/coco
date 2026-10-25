@@ -437,3 +437,11 @@ Status: **done** — verified end to end.
   details returned; quiet goal → privacy card. Green.
 - Live e2e payments were NOT run in this session (money path) — flagged for a real
   sandbox test before trusting it.
+
+## 2026-10-25 — Router capability prompt: never refuse browser-agent tasks
+- gateway.js ROUTER_PROMPT rewritten verbatim per spec: the router is the intelligent
+  frontend of a full-power browser agent — logins, emails, forms, purchases, errands are
+  all in scope; passwords/cards come from the vault rather than chat. Refusal-by-inability
+  removed; missing params get clarified, final goals go straight to dispatch_browser.
+- test_router.js: added a capability probe ("send a follow-up email to my bank" → must not
+  refuse). Live 3-turn check green: vague → chat, concrete → tool call, email task → accepted.
