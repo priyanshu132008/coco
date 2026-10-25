@@ -643,6 +643,9 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
         register_should_stop_callback=should_stop,
         use_vision=True,
         enable_signal_handler=False,  # we own SIGINT — browser-use's handler only pauses
+        # browser-use's per-model default is 75s (agent.service._get_model_timeout) — a slow
+        # free endpoint (Nemotron on NVIDIA) dies mid-task to "LLM call timed out". 3 min.
+        llm_timeout=int(os.environ.get("COCO_LLM_TIMEOUT", "180")),
     )
     _saved_addr = get_address(domain) if domain else None
     addr_line = f"\nSaved delivery address in the vault for {domain}: {_saved_addr} — use it for any address screen." if _saved_addr else ""

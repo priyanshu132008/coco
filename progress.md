@@ -498,3 +498,11 @@ Status: **done** — verified end to end.
   went to the foreground gateway's unread stdin). Real-pty test: stops cleanly, exits,
   nothing respawns.
 - NOTE: the launchd gateway is bootout+disabled — coco online is now the only runner.
+
+## 2026-10-25 — 3-minute LLM timeout for slow endpoints
+- browser_driver.py: browser-use's Agent enforces llm_timeout with a per-model default of
+  75s (agent/service.py _get_model_timeout) — Nemotron 120B on NVIDIA's free endpoint
+  exceeds it and the agent aborts with "LLM call timed out after 75 seconds". All agent
+  builds (main + OTP/address/payment resumes) now pass llm_timeout=180 via the shared
+  `common` dict, overridable with COCO_LLM_TIMEOUT. LiteLLM's own request timeout is
+  already 600s (default) — no client change needed. --check green.
