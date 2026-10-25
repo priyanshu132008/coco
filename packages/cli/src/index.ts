@@ -210,8 +210,8 @@ async function runCommand(prompt: string): Promise<void> {
 }
 
 if (cmd === 'configure') {
-  console.log('▸ booting the dashboard and opening the key setup page…')
-  void serveOrOpen('/setup')
+  console.log('▸ booting the dashboard — the setup page is linked from the home page')
+  void serveOrOpen('/')
 } else if (cmd === 'online') {
   onlineCommand()
 } else if (cmd === 'stop') {

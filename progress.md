@@ -395,3 +395,17 @@ Status: **done** — verified end to end.
   401 spam → emits error event, exits 3, no "Done."; py_compile + --check self-check green.
   (The success path with a credited LLM key wasn't re-run — 402'd account; the only new
   gate before "Done." is the is_successful() check.)
+
+## 2026-10-25 — Model picker on setup + configure routing
+- setup page: "Model Name" input for every provider (was custom-only, so openrouter users
+  were locked to 'auto'), with the exact-string helper + placeholder; optional — blank keeps
+  the provider default. /api/setup + planSetup store a user-specified model verbatim in
+  config.json.active_model; resolveModel (display) passes qualified strings through.
+- byok.py: models already written "provider/model" (18 known prefixes) go to LiteLLM
+  verbatim — no "openrouter/anthropic/…" → "openrouter/openrouter/anthropic/…" double
+  prefixing; bare models keep the provider/ prefix. Added a byok self-check.
+- coco configure now opens http://localhost:3000/ (home) — the setup page is linked from it.
+- E2E verified on a sandbox COCO_ROOT: form POST with model openrouter/anthropic/claude-3.5-sonnet
+  → config.json verbatim → byok resolves the same string → browser_driver's ChatLiteLLM.
+  (A zombie next dev briefly hijacked a first test POST and rewrote the real .env/config.json
+  with the same values; verified both intact afterwards.)

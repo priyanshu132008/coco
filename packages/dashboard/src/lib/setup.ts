@@ -24,24 +24,25 @@ export interface SetupInput {
 }
 
 /** Provider submission → the fields byok.py's config path expects, and the resolved
- *  LiteLLM model string. byok.py passes "openai" models through verbatim and prefixes
- *  everything else with the provider — so a custom gateway gets "openai/<form model>". */
+ *  LiteLLM model string. A model the user typed wins verbatim (it may carry its own
+ *  provider prefix — byok.py passes known-prefixed strings through); blank falls back
+ *  to the provider default. byok.py prefixes a bare model with the provider itself. */
 export function planSetup(input: SetupInput): { provider: string; active_model: string } {
   const p = PROVIDERS[input.provider]
-  const active_model =
-    p.provider === 'openai'
-      ? input.provider === 'custom'
-        ? `openai/${input.model || 'gpt-4o'}`
-        : p.model
-      : p.model
+  const given = input.model?.trim()
+  const active_model = given || (p.provider === 'openai' && input.provider === 'custom' ? 'gpt-4o' : p.model)
   return { provider: p.provider, active_model }
 }
 
-/** The FULLY-qualified LiteLLM model string (e.g. "openrouter/auto") — consumed
- *  verbatim when stored (bot_credentials.model → COCO_MODEL → ChatLiteLLM). */
+/** LiteLLM provider prefixes — a model written like "provider/model" is already qualified. */
+const QUALIFIED_RE =
+  /^(anthropic|openai|openrouter|ollama|gemini|azure|azure_ai|bedrock|vertex_ai|mistral|groq|deepseek|together_ai|xai|cohere|fireworks|watsonx|perplexity)\//
+
+/** The FULLY-qualified LiteLLM model string (e.g. "openrouter/auto") — display only;
+ *  the stored value is config.json's active_model + provider (tools/byok.py resolves). */
 export function resolveModel(input: SetupInput): string {
   const { provider, active_model } = planSetup(input)
-  return provider === 'openai' ? active_model : `${provider}/${active_model}`
+  return provider === 'openai' || QUALIFIED_RE.test(active_model) ? active_model : `${provider}/${active_model}`
 }
 
 if (process.argv[1]?.endsWith('setup.ts')) {
@@ -49,17 +50,24 @@ if (process.argv[1]?.endsWith('setup.ts')) {
   // verbatim, so a custom model must keep its "openai/" prefix and others must not double up
   if (planSetup({ token: 't', provider: 'anthropic', apiKey: 'k' }).active_model !== 'claude-sonnet-5-5') throw new Error('anthropic config wrong')
   const custom = planSetup({ token: 't', provider: 'custom', apiKey: 'k', baseUrl: 'http://x/v1', model: 'my-model' })
-  if (custom.active_model !== 'openai/my-model') throw new Error('custom model not used')
+  if (custom.active_model !== 'my-model') throw new Error('custom model not used') // bare — byok.py prefixes openai/
+  // a user-specified model wins verbatim, whatever the provider
+  const given = planSetup({ token: 't', provider: 'openrouter', apiKey: 'k', model: 'openrouter/anthropic/claude-3.5-sonnet' })
+  if (given.active_model !== 'openrouter/anthropic/claude-3.5-sonnet') throw new Error('user model dropped: ' + JSON.stringify(given))
   for (const p of Object.keys(PROVIDERS) as Provider[]) {
     // resolveModel is the display string — with config.json the runner (byok.py) adds the
     // provider prefix itself, so the bare model must never carry a doubled provider name
     const resolved = resolveModel({ token: 't', provider: p, apiKey: 'k' })
-    // custom resolves under openai (any OpenAI-compatible gateway), openai rides bare (gpt-4o)
-    const qualified = p === 'custom' ? 'openai/' : p === 'openai' ? 'gpt-4o' : `${p}/`
+    // custom+openai resolve bare (gpt-4o — LiteLLM infers/rides the openai provider)
+    const qualified = p === 'custom' || p === 'openai' ? 'gpt-4o' : `${p}/`
     if (!resolved.startsWith(qualified)) throw new Error(`${p}: unresolved model "${resolved}"`)
     const hits = resolved.split('/').filter((part: string) => part === p).length
     if (hits > 1) throw new Error(`${p}: provider prefix repeated in "${resolved}"`)
   }
   if (resolveModel({ token: 't', provider: 'openrouter', apiKey: 'k' }) !== 'openrouter/auto') throw new Error('openrouter auto unresolved')
+  // a user-typed qualified model passes through the display string un-prefixed
+  if (resolveModel({ token: 't', provider: 'openrouter', apiKey: 'k', model: 'anthropic/claude-3.5-sonnet' }) !== 'anthropic/claude-3.5-sonnet') {
+    throw new Error('qualified user model was re-prefixed')
+  }
   console.log('setup self-check OK (provider mapping)')
 }

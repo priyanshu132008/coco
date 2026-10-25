@@ -141,33 +141,36 @@ export default function SetupPage(): React.ReactElement {
               />
             </Field>
 
+            <Field
+              id="model"
+              label="Model Name"
+              helper="The exact model string for the chosen provider, e.g. anthropic/claude-3.5-sonnet, openrouter/deepseek/deepseek-chat, gpt-4o. Leave blank for the provider default."
+            >
+              <input
+                id="model"
+                name="model"
+                type="text"
+                autoComplete="off"
+                placeholder={provider === 'openrouter' ? 'openrouter/anthropic/claude-3.5-sonnet' : provider === 'anthropic' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o'}
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className={inputClass}
+              />
+            </Field>
+
             {provider === 'custom' && (
-              <>
-                <Field id="baseUrl" label="Base URL" helper="An OpenAI-compatible endpoint, e.g. http://localhost:11434/v1">
-                  <input
-                    id="baseUrl"
-                    name="baseUrl"
-                    type="url"
-                    autoComplete="off"
-                    required
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
-                    className={inputClass}
-                  />
-                </Field>
-                <Field id="model" label="Model" helper="The model name your endpoint expects.">
-                  <input
-                    id="model"
-                    name="model"
-                    type="text"
-                    autoComplete="off"
-                    required
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    className={inputClass}
-                  />
-                </Field>
-              </>
+              <Field id="baseUrl" label="Base URL" helper="An OpenAI-compatible endpoint, e.g. http://localhost:11434/v1">
+                <input
+                  id="baseUrl"
+                  name="baseUrl"
+                  type="url"
+                  autoComplete="off"
+                  required
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  className={inputClass}
+                />
+              </Field>
             )}
 
             {error && (
