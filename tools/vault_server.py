@@ -2,9 +2,9 @@
 """Vault Web UI + local dashboard — the localhost front-end for a single-machine install.
 
 Served on 127.0.0.1:8081. Spawned at boot by telegram_gateway/gateway.js (and
-`openinstinct start`). Pages: `/` status dashboard, `/setup` key entry (writes .env,
+`coco start`). Pages: `/` status dashboard, `/setup` key entry (writes .env,
 no file editing needed), `/vault/fill` per-domain credential form. Optional
-OI_VAULT_TOKEN guards the forms.
+COCO_VAULT_TOKEN guards the forms.
 
     ./.venv-bu/bin/python tools/vault_server.py
 """
@@ -22,14 +22,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dotenv import load_dotenv, set_key
 
 load_dotenv()
-from tools.vault import KINDS, add_creds, add_seed, get_creds, list_domains, _put, _ROOT  # noqa: E402
+from tools.vault import KINDS, add_creds, add_seed, get_creds, list_domains, _put, _env, _ROOT  # noqa: E402
 
 app = Flask(__name__)
-TOKEN = os.environ.get("OI_VAULT_TOKEN")  # when set, the forms must carry matching ?token=
-ENV_PATH = os.environ.get("OI_ENV_PATH") or str(_ROOT / ".env")
+TOKEN = _env("COCO_VAULT_TOKEN")  # when set, the forms must carry matching ?token=
+ENV_PATH = _env("COCO_ENV_PATH") or str(_ROOT / ".env")
 
 PAGE = """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenInstinct Vault</title><style>
+<title>Coco Vault</title><style>
 body{{font-family:-apple-system,system-ui,sans-serif;background:#111726;color:#e8ecf4;margin:0}}
 .card{{max-width:420px;margin:24px auto;padding:20px;background:#1a2133;border-radius:14px}}
 h1{{font-size:1.2rem;margin:0 0 4px}} p.s{{color:#8b93a7;font-size:.85rem;margin:0 0 14px}}
@@ -71,19 +71,19 @@ def _authorized() -> bool:
     return not TOKEN or request.args.get("token", request.form.get("token", "")) == TOKEN
 
 
-#: Keys the setup page manages. OI_VAULT_KEY is deliberately absent — vault.py generates it.
+#: Keys the setup page manages. COCO_VAULT_KEY is deliberately absent — vault.py generates it.
 SETUP_KEYS = (
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token (required — from @BotFather on Telegram)"),
     ("OPENAI_API_KEY", "OpenAI API key (optional — model provider for config.json)"),
     ("ANTHROPIC_API_KEY", "Anthropic API key (optional — model provider)"),
     ("OPENROUTER_API_KEY", "OpenRouter API key (optional — model provider)"),
-    ("OI_PRIVACY_API_KEY", "Privacy.com API key (optional — virtual card checkout)"),
+    ("COCO_PRIVACY_API_KEY", "Privacy.com API key (optional — virtual card checkout)"),
 )
 
 
 def _fmt(html_text: str) -> str:
     return f"<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>\
-<title>OpenInstinct</title><style>{_STYLE}</style></head><body>{html_text}</body></html>"
+<title>Coco</title><style>{_STYLE}</style></head><body>{html_text}</body></html>"
 
 
 _STYLE = """body{font-family:-apple-system,system-ui,sans-serif;background:#111726;color:#e8ecf4;margin:0}
@@ -104,7 +104,7 @@ def dashboard():
     bot_ok = bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
     setup = f"<p class='miss'>⚙️ {html.escape(missing[0])} missing — <a href='/setup'>enter it at /setup</a> (the bot needs it to come online).</p>" if not bot_ok else "<p class='ok'>✔ Bot token present — gateway polls Telegram.</p>"
     return _fmt(f"""<div class="card">
-<h1>⚡ OpenInstinct</h1><p class="s">Local dashboard — all state stays on this machine ({html.escape(str(_ROOT))}/vault.db, .env).</p>
+<h1>⚡ Coco</h1><p class="s">Local dashboard — all state stays on this machine ({html.escape(str(_ROOT))}/vault.db, .env).</p>
 {setup}
 <h1>🔐 Vault domains</h1><ul>{rows}</ul>
 <a href="/vault/fill?domain=">Open the credential form →</a> · <a href="/setup">Key setup →</a>
@@ -168,11 +168,17 @@ def submit():
 
 
 if __name__ == "__main__":
-    if os.environ.get("OI_VAULT_SERVER_CHECK"):  # hermetic round-trip; never touches the real vault
-        os.environ["OI_VAULT_DB"] = tempfile.mktemp(suffix=".db")
-        os.environ["OI_ENV_PATH"] = tempfile.mktemp(suffix=".env")
+    if os.environ.get("COCO_VAULT_SERVER_CHECK"):  # hermetic round-trip; never touches the real vault
+        os.environ["COCO_VAULT_DB"] = tempfile.mktemp(suffix=".db")
+        os.environ["COCO_ENV_PATH"] = tempfile.mktemp(suffix=".env")
         add_creds("check.com", {"password": "pw123"})
         assert get_creds("check.com") == {"password": "pw123"}
         print("[vault_ui] round-trip ok", flush=True)
         sys.exit(0)
+    # coco start sets this; the launchd gateway spawn does not (no browser from a daemon)
+    if os.environ.get("COCO_OPEN_BROWSER"):
+        import threading
+        import webbrowser
+
+        threading.Timer(1.5, webbrowser.open, ("http://127.0.0.1:8081",)).start()
     app.run(host="127.0.0.1", port=8081, debug=False)  # loopback only — local machine

@@ -11,17 +11,17 @@ import time
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = os.environ.get("OI_DB_PATH") or os.path.join(str(_ROOT), "telegram_gateway", "tasks.db")
-APPROVAL_TIMEOUT = int(os.environ.get("OI_APPROVAL_TIMEOUT", "300"))
-CODE_TIMEOUT = int(os.environ.get("OI_CODE_TIMEOUT", "120"))
+DB_PATH = os.environ.get("COCO_DB_PATH") or os.path.join(str(_ROOT), "telegram_gateway", "tasks.db")
+APPROVAL_TIMEOUT = int(os.environ.get("COCO_APPROVAL_TIMEOUT", "300"))
+CODE_TIMEOUT = int(os.environ.get("COCO_CODE_TIMEOUT", "120"))
 #: How long the driver waits for a human to solve a Cloudflare challenge and reply 'retry'.
-RETRY_TIMEOUT = int(os.environ.get("OI_RETRY_TIMEOUT", "30"))
+RETRY_TIMEOUT = int(os.environ.get("COCO_RETRY_TIMEOUT", "30"))
 #: Statuses that mean "the task is still alive" — anything else is a decision or a stop.
 ACTIVE_STATUSES = ("running", "booting")
 
 
 def _db() -> str:
-    return os.environ.get("OI_DB_PATH") or DB_PATH
+    return os.environ.get("COCO_DB_PATH") or DB_PATH
 
 
 def _status(conn: sqlite3.Connection, task_id: int) -> str:

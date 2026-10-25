@@ -7,7 +7,7 @@ delivery address and UPI — every sensitive column Fernet-encrypted separately.
 Legacy totp_seeds / vault_creds tables (pre-accounts, 10-20) are migrated in
 once and kept as read-only leftovers.
 
-Key management: OI_VAULT_KEY in the env file (Fernet, url-safe base64). First run
+Key management: COCO_VAULT_KEY in the env file (Fernet, url-safe base64). First run
 generates and appends; later runs reuse. Plaintext never touches disk.
 
 Self-check (throwaway paths, no side effects):
@@ -29,8 +29,12 @@ if str(Path(__file__).resolve().parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 _ROOT = Path(__file__).resolve().parent.parent
-ENV_PATH = os.environ.get("OI_ENV_PATH") or str(_ROOT / ".env")
-DB_PATH = os.environ.get("OI_VAULT_DB") or str(_ROOT / "vault.db")
+#: COCO_* first, then the pre-rebrand OI_* name — an existing .env keeps working.
+def _env(name: str) -> str:
+    return os.environ.get(name) or os.environ.get("OI_" + name[5:]) or ""
+
+ENV_PATH = _env("COCO_ENV_PATH") or str(_ROOT / ".env")
+DB_PATH = _env("COCO_VAULT_DB") or str(_ROOT / "vault.db")
 
 KINDS = ("ecommerce", "social", "google", "custom")
 ENC_COLS = ("enc_username", "enc_password", "enc_totp", "enc_address", "enc_upi",
@@ -41,19 +45,19 @@ FIELD_COLS = {"username": "enc_username", "password": "enc_password", "totp": "e
 
 
 def _db() -> str:
-    # lazy — self-checks point OI_VAULT_DB at throwaway files after import
-    return os.environ.get("OI_VAULT_DB") or DB_PATH
+    # lazy — self-checks point COCO_VAULT_DB at throwaway files after import
+    return _env("COCO_VAULT_DB") or DB_PATH
 
 
 def _get_key() -> bytes:
-    """Env key → reuse; missing → generate once and persist (OI_VAULT_KEY). Envs read lazily."""
-    env_path = os.environ.get("OI_ENV_PATH") or ENV_PATH
+    """Env key → reuse; missing → generate once and persist (COCO_VAULT_KEY). Envs read lazily."""
+    env_path = _env("COCO_ENV_PATH") or ENV_PATH
     load_dotenv(env_path)
-    key = os.environ.get("OI_VAULT_KEY")
+    key = _env("COCO_VAULT_KEY")
     if not key:
         key = Fernet.generate_key().decode()
-        set_key(env_path, "OI_VAULT_KEY", key)  # creates/updates the env file atomically
-        os.environ["OI_VAULT_KEY"] = key
+        set_key(env_path, "COCO_VAULT_KEY", key)  # creates/updates the env file atomically
+        os.environ["COCO_VAULT_KEY"] = key
         print(f"[vault] generated new encryption key → {env_path}", flush=True)
     return key.encode()
 
@@ -67,7 +71,7 @@ def _decrypt(blob: str) -> Optional[str]:
     try:
         return _fernet().decrypt(blob.encode()).decode()
     except Exception:
-        print("[vault] decryption failed — OI_VAULT_KEY changed since storage", flush=True)
+        print("[vault] decryption failed — COCO_VAULT_KEY changed since storage", flush=True)
         return None
 
 
@@ -212,7 +216,7 @@ def has_domain(domain: str) -> bool:
 
 #: The vault UI (tools/vault_server.py) writes into vault.db while the agent waits.
 #: How long the driver keeps polling for the human's setup instead of dying.
-VAULT_WAIT_SECONDS = float(os.environ.get("OI_VAULT_WAIT", "300"))
+VAULT_WAIT_SECONDS = float(os.environ.get("COCO_VAULT_WAIT", "300"))
 
 
 def wait_for_domain(domain: str, timeout: float = VAULT_WAIT_SECONDS, interval: float = 3.0) -> bool:
@@ -282,9 +286,9 @@ if __name__ == "__main__":
     seed = "JBSWY3DPEHPK3PXP"
     import pyotp
 
-    os.environ["OI_VAULT_DB"] = str(Path(os.environ.get("OI_VAULT_DB", "/tmp")) / "vault_selfcheck.db")
-    os.environ["OI_ENV_PATH"] = str(Path(os.environ.get("OI_ENV_PATH", "/tmp")) / "vault_selfcheck.env")  # never touch the real .env/vault on self-check
-    DB_PATH = os.environ["OI_VAULT_DB"]
+    os.environ["COCO_VAULT_DB"] = str(Path(os.environ.get("COCO_VAULT_DB", "/tmp")) / "vault_selfcheck.db")
+    os.environ["COCO_ENV_PATH"] = str(Path(os.environ.get("COCO_ENV_PATH", "/tmp")) / "vault_selfcheck.env")  # never touch the real .env/vault on self-check
+    DB_PATH = os.environ["COCO_VAULT_DB"]
     add_seed("example.com", seed)
     code = get_code("example.com")
     assert code == pyotp.TOTP(seed).now(), f"vault code {code} != direct"

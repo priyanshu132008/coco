@@ -4,7 +4,7 @@ import { inflateSync } from 'node:zlib'
 // and hash-based 768-d text embeddings. Swap for the real embedder + ImageNet normalization
 // when the trainer publishes the preprocessing spec.
 
-/** Model input geometry (matches openinstinct_full_v1.onnx metadata). */
+/** Model input geometry (matches coco_full_v1.onnx metadata). */
 export const IMG_SIZE = 224
 export const DOM_TOKENS = 32
 export const DOM_EMBED_DIM = 768

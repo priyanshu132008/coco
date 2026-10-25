@@ -27,11 +27,11 @@ conn.close()
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env = {
     **os.environ,
-    "OI_DB_PATH": tmp_db,
-    "OI_APPROVAL_TIMEOUT": "60",
-    "OI_FAKE_VLM": "1",  # payment=true, price $450
-    "OI_FAKE_PRIVACY": "1",  # approved payment now issues a (stubbed) virtual card
-    "OI_FAKE_FILL": '[{"field": "PAN", "box_id": 1}]',
+    "COCO_DB_PATH": tmp_db,
+    "COCO_APPROVAL_TIMEOUT": "60",
+    "COCO_FAKE_VLM": "1",  # payment=true, price $450
+    "COCO_FAKE_PRIVACY": "1",  # approved payment now issues a (stubbed) virtual card
+    "COCO_FAKE_FILL": '[{"field": "PAN", "box_id": 1}]',
 }
 proc = subprocess.Popen(
     [os.path.join(root, ".venv", "bin", "python"), os.path.join(root, "tools", "agent_runner.py"),

@@ -1,4 +1,4 @@
-# OpenInstinct — Progress
+# Coco (was OpenInstinct) — Progress
 
 ## 2026-10-23 — Xvfb stale-lock crash on restart + hanging browser launch
 
@@ -292,3 +292,23 @@ Status: **done** — verified end to end.
   `bin` so `npm i -g .` puts `openinstinct` on PATH (`dist/openinstinct.js`).
 - Checks: vault self-check, ledger.js self-check, vault_server round-trip, ledger_poll
   smoke (code + approval), CLI build, /setup POST writes .env — all green.
+
+## 2026-10-25 — Rebrand: OpenInstinct → Coco + CLI expansion
+- Global replace across Python/JS/HTML/Markdown: "OpenInstinct"→"Coco", "openinstinct"→"coco",
+  env prefix `OI_`→`COCO_` (`COCO_VAULT_KEY`, `COCO_VAULT_DB`, `COCO_DB_PATH`, `COCO_TELEGRAM_*`,
+  `COCO_FAKE_*` …). Package names: root `coco`, `@coco/core`, `@coco/cli`-style naming; lockfile
+  regenerated; `build.sh` now emits `dist/coco.js`; launchd plist renamed `com.coco.gateway`
+  (kept pointing at the existing repo directory — the absolute path on disk didn't change).
+- Legacy-compat: `vault.py` `_env()` and `ledger.js` fall back to the pre-rebrand `OI_VAULT_KEY`/
+  `OI_*_PATH` names, so the existing `.env` + `vault.db` stay decryptable (verified against the
+  real .env). progress.md history left verbatim — only this entry is new.
+- `coco start`: boots dashboard on 127.0.0.1:8081 (auto-opens the browser via vault_server's
+  `webbrowser.open`, flag `COCO_OPEN_BROWSER=1` — daemon/launchd spawns never pop windows) and
+  the Telegram gateway (long polling).
+- `coco configure`: opens http://127.0.0.1:8081/setup (starts the dashboard first if down).
+- `coco health` (tools/health.py): .env presence, COCO_VAULT_KEY Fernet validity (never
+  auto-regens a live key), PRAGMA integrity_check on vault.db/tasks.db, Telegram + LLM key
+  presence — every failure prints a specific fix; exit 1 iff unhealthy. Self-check exercises
+  green + corrupt fixtures.
+- Checks green: py_compile all tools, tsc core + esbuild CLI build, vault/ledger/vault_server
+  self-checks, health self-check, test_totp, node --check gateway.

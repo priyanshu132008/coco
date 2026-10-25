@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""OpenInstinct hidden browser execution layer — browser-use agent over CloakBrowser.
+"""Coco hidden browser execution layer — browser-use agent over CloakBrowser.
 
 CloakBrowser is launched first (persistent profile, binary-level fingerprint stealth),
 then browser-use attaches over CDP. Two-phase HitL: the agent pursues the goal but is
@@ -62,17 +62,17 @@ PRICE_WORD_RE = re.compile(r"\b(?:total|pay|price)\b[:\s]*([$₹]?\s?[\d,]+(?:\.
 LOGIN_INTENT_RE = re.compile(r"log[- ]?in|sign[- ]?in|sign[- ]?up|check\s?out|order\b|buy\b|purchase|cart|pay\b|place an order", re.I)
 DOMAIN_RE = re.compile(r"(?:https?://)?(?:www\.)?([a-z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2,})?)", re.I)
 #: Persistent browser profile — logged-in sessions survive across tasks (vault check pairs with it).
-PROFILE_DIR = os.environ.get("OI_BROWSER_PROFILE") or str(_ROOT / ".browser_profile")
-#: Headless by default; OI_HEADLESS=0 (or legacy OI_BU_HEADLESS=0) opens a visible window.
-HEADLESS = os.environ.get("OI_HEADLESS", os.environ.get("OI_BU_HEADLESS", "1")) != "0"
+PROFILE_DIR = os.environ.get("COCO_BROWSER_PROFILE") or str(_ROOT / ".browser_profile")
+#: Headless by default; COCO_HEADLESS=0 (or legacy COCO_BU_HEADLESS=0) opens a visible window.
+HEADLESS = os.environ.get("COCO_HEADLESS", os.environ.get("COCO_BU_HEADLESS", "1")) != "0"
 #: How long to wait for a competing session to release the profile lock before giving up.
-LOCK_WAIT_SECONDS = float(os.environ.get("OI_PROFILE_LOCK_WAIT", "3"))
+LOCK_WAIT_SECONDS = float(os.environ.get("COCO_PROFILE_LOCK_WAIT", "3"))
 #: Grace period before a SIGINT'ed run is force-exited (the agent stops at the next step boundary).
-SHUTDOWN_GRACE = float(os.environ.get("OI_SHUTDOWN_GRACE", "8"))
+SHUTDOWN_GRACE = float(os.environ.get("COCO_SHUTDOWN_GRACE", "8"))
 #: How many times the driver tries to click a Cloudflare checkbox before asking the human.
-CAPTCHA_ATTEMPTS = int(os.environ.get("OI_CAPTCHA_ATTEMPTS", "2"))
+CAPTCHA_ATTEMPTS = int(os.environ.get("COCO_CAPTCHA_ATTEMPTS", "2"))
 #: How long to wait for Cloudflare to mint its token after the checkbox click.
-CAPTCHA_SETTLE = float(os.environ.get("OI_CAPTCHA_SETTLE", "3"))
+CAPTCHA_SETTLE = float(os.environ.get("COCO_CAPTCHA_SETTLE", "3"))
 #: Text Cloudflare shows instead of a checkbox — the invisible-interstitial case.
 #: Deliberately narrow: a bare "Cloudflare" mention (a footer link) must not read as a
 #: challenge, or every ordinary page would trigger a pointless 30s human wait.
@@ -88,7 +88,7 @@ INDIAN_LOCALE = "en-IN"
 MUMBAI_GEO = {"latitude": 19.0760, "longitude": 72.8777, "accuracy": 100}
 ACCEPT_LANGUAGE = "en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7"
 #: CloakBrowser supplies the endpoint browser-use connects to (strict anti-bot config).
-CDP_PORT = int(os.environ.get("OI_CDP_PORT", "9242"))
+CDP_PORT = int(os.environ.get("COCO_CDP_PORT", "9242"))
 CDP_ENDPOINT = f"http://localhost:{CDP_PORT}"
 #: CloakBrowser handles webdriver/plugins/Intl-fingerprint spoofing natively at the binary
 #: level (and launches with locale/timezone baked in) — only geolocation is left to JS.
@@ -448,7 +448,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
     if task_id and domain and LOGIN_INTENT_RE.search(goal) and not has_domain(domain):
         # one clean JSON line on stdout — the Node relay turns it into the Mini App button
         # (no plaintext links, no exit). Then stay alive: wait_for_domain polls vault.db
-        # every 3s for up to OI_VAULT_WAIT=300s and the task resumes the moment setup lands.
+        # every 3s for up to COCO_VAULT_WAIT=300s and the task resumes the moment setup lands.
         print(json.dumps({"event": "vault_required", "domain": domain, "type": "credentials"}), flush=True)
         if wait_for_domain(domain):
             emit({"type": "chat", "message": f"Vault setup for {domain} received — continuing."})
@@ -572,7 +572,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
 
     # gate loop: each run may stop at an OTP / location / checkout gate; handle it and re-attack
     # the remaining goal with the resolved asset — until a clean finish or a resource runs out
-    LAUNCH_TIMEOUT = float(os.environ.get("OI_LAUNCH_TIMEOUT", "90"))
+    LAUNCH_TIMEOUT = float(os.environ.get("COCO_LAUNCH_TIMEOUT", "90"))
     for _gate_round in range(4):
         # launch here (not inside agent.run) so a profile-lock collision is retried, not fatal.
         # Strict timeout: with a dead X display (Xvfb crash) Chrome hangs at launch forever —
@@ -590,7 +590,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             emit({"type": "error", "message": f"browser launch failed: {e}"})
             return 1
         history = await agent.run(
-            max_steps=max_steps or int(os.environ.get("OI_BU_MAX_STEPS", "25")),
+            max_steps=max_steps or int(os.environ.get("COCO_BU_MAX_STEPS", "25")),
             on_step_start=on_step_start,  # clear Cloudflare before the model sees the page
         )
         result = history.final_result() or ""
@@ -664,7 +664,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
         # approved: single-use card capped at price+10%, handed to the agent as sensitive data
         from tools.payment import generate_virtual_card
 
-        if os.environ.get("OI_FAKE_PRIVACY"):
+        if os.environ.get("COCO_FAKE_PRIVACY"):
             card = {"pan": "4111111111111111", "cvv": "123", "exp_month": "09", "exp_year": "2027", "spend_limit": 0}
         else:
             card = generate_virtual_card(price)
@@ -733,7 +733,7 @@ def extract_domain_from_urls(urls: str) -> Optional[str]:
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="OpenInstinct browser-use driver")
+    p = argparse.ArgumentParser(description="Coco browser-use driver")
     p.add_argument("mode", nargs="?", default=None, help="run = execute a goal")
     p.add_argument("--goal", default=None, help="natural-language goal")
     p.add_argument("--task-id", type=int, default=None, help="ledger task id; enables the HitL gates")

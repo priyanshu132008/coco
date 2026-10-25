@@ -6,7 +6,7 @@ const execP = promisify(exec)
 export const CDP_DEBUG_PORT = 9222
 
 /** Isolated profile dir — fresh process + separate profile so a running default-profile Chrome can't swallow the flags. */
-export const CHROME_PROFILE_DIR = '/tmp/openinstinct-chrome-profile'
+export const CHROME_PROFILE_DIR = '/tmp/coco-chrome-profile'
 
 /** Per-platform shell command that starts Google Chrome on an isolated profile with the CDP debug port open, skipping all first-run UX. */
 export function chromeLaunchCommand(platform = process.platform): string {
@@ -23,11 +23,11 @@ export function chromeLaunchCommand(platform = process.platform): string {
   }
 }
 
-/** Cleanup command that kills orphaned OpenInstinct-profile Chrome processes holding the port/profile. */
+/** Cleanup command that kills orphaned Coco-profile Chrome processes holding the port/profile. */
 export function staleKillCommand(platform = process.platform): string {
   return platform === 'win32'
-    ? `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object CommandLine -match 'openinstinct-chrome-profile' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`
-    : 'pkill -f openinstinct-chrome-profile'
+    ? `powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object CommandLine -match 'coco-chrome-profile' | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"`
+    : 'pkill -f coco-chrome-profile'
 }
 
 /** Process manager for the live-hook architecture: reuse the devtools port if live, else spawn real Chrome and wait for CDP. */
@@ -81,9 +81,9 @@ if (require.main === module) {
     if (!cond) throw new Error(`launcher self-check failed: ${msg}`)
   }
   assert(/remote-debugging-port=9222/.test(cmd), 'missing debug flag')
-  assert(/--user-data-dir="\/tmp\/openinstinct-chrome-profile"/.test(cmd), 'missing isolated profile dir')
+  assert(/--user-data-dir="\/tmp\/coco-chrome-profile"/.test(cmd), 'missing isolated profile dir')
   assert('--no-first-run --no-default-browser-check --disable-fre --disable-search-engine-choice-screen'.split(' ').every((f) => cmd.includes(f)), 'missing first-run bypass flags')
-  assert(staleKillCommand('darwin') === 'pkill -f openinstinct-chrome-profile', 'stale-kill command wrong')
+  assert(staleKillCommand('darwin') === 'pkill -f coco-chrome-profile', 'stale-kill command wrong')
   new LiveChromeLauncher()
     .endpointLive()
     .then((live) => console.log(`[launcher] self-check ✓ — command builders OK, CDP endpoint ${live ? 'LIVE' : 'closed'}`))

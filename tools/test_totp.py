@@ -28,9 +28,9 @@ conn.close()
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env = {
     **os.environ,
-    "OI_DB_PATH": tmp_db,           # runner's approval/codes ledger
-    "OI_CODE_TIMEOUT": "60",
-    "OI_FAKE_VLM": '{"box_id": 2, "payment": false, "price": null, "is_totp_field": true, "domain": "testshop.com"}',
+    "COCO_DB_PATH": tmp_db,           # runner's approval/codes ledger
+    "COCO_CODE_TIMEOUT": "60",
+    "COCO_FAKE_VLM": '{"box_id": 2, "payment": false, "price": null, "is_totp_field": true, "domain": "testshop.com"}',
 }
 proc = subprocess.Popen(
     [os.path.join(root, ".venv", "bin", "python"), os.path.join(root, "tools", "agent_runner.py"),

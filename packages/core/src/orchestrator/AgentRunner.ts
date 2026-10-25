@@ -25,8 +25,8 @@ export interface RunReport {
   success: boolean
 }
 
-const TRAVEL_URL = process.env.OI_TRAVEL_URL ?? 'https://www.easemytrip.com'
-const DEFAULT_URL = process.env.OI_DEFAULT_URL ?? 'https://www.google.com'
+const TRAVEL_URL = process.env.COCO_TRAVEL_URL ?? 'https://www.easemytrip.com'
+const DEFAULT_URL = process.env.COCO_DEFAULT_URL ?? 'https://www.google.com'
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s)
 
@@ -59,7 +59,7 @@ export function planFromPrompt(prompt: string): PlanStep[] {
     plan.push({
       hand: 'mobile',
       intent: 'Open UPI app to authenticate payment',
-      cmds: [{ type: 'NAVIGATE', package: process.env.OI_UPI_PACKAGE ?? 'com.phonepe.app' }],
+      cmds: [{ type: 'NAVIGATE', package: process.env.COCO_UPI_PACKAGE ?? 'com.phonepe.app' }],
     })
   }
   if (/\b(whatsapp|message|text)\b/.test(p)) {

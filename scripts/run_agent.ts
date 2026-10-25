@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import * as fs from 'node:fs'
-import { Orchestrator, AgentRunner, AndroidBridge } from '@openinstinct/core'
+import { Orchestrator, AgentRunner, AndroidBridge } from '@coco/core'
 
 const log = (tag: string, msg: string) => console.log(`[agent] ${tag} ${msg}`)
 
 async function preflight(adb: AndroidBridge, orch: Orchestrator, prompt: string) {
   console.log(`
-  ⚡ OpenInstinct live run
+  ⚡ Coco live run
   ────────────────────────
   ▸ prompt : "${prompt}"
 `)

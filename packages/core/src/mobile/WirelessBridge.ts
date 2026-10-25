@@ -20,7 +20,7 @@ export function parseMdnsServices(stdout: string): WirelessTarget[] {
 
 /**
  * Android bridge with Wi-Fi ADB support: when no USB device is attached it tries
- * OI_WIRELESS_HOST (port OI_WIRELESS_PORT, default 5555), then adb mDNS discovery,
+ * COCO_WIRELESS_HOST (port COCO_WIRELESS_PORT, default 5555), then adb mDNS discovery,
  * connecting to the first reachable target so the same execute() interface just works.
  */
 export class WirelessBridge extends AndroidBridge {
@@ -53,8 +53,8 @@ export class WirelessBridge extends AndroidBridge {
     const usb = await super.device()
     if (usb) return usb
     const candidates: WirelessTarget[] = []
-    const envHost = process.env.OI_WIRELESS_HOST
-    if (envHost) candidates.push({ host: envHost, port: Number(process.env.OI_WIRELESS_PORT ?? 5555) })
+    const envHost = process.env.COCO_WIRELESS_HOST
+    if (envHost) candidates.push({ host: envHost, port: Number(process.env.COCO_WIRELESS_PORT ?? 5555) })
     candidates.push(...(await this.discover()))
     for (const t of candidates) {
       console.log(`[wireless] no USB device — trying ${t.host}:${t.port} …`)

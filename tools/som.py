@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Set-of-Mark (SoM) visual prompting engine for OpenInstinct.
+"""Set-of-Mark (SoM) visual prompting engine for Coco.
 
 Turns a screenshot into a numbered-box annotated image plus a JSON mapping of every
 candidate interactive element (buttons, inputs, calendar cells, links). The agent

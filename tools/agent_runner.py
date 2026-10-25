@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""OpenInstinct BYOK execution pipeline — cloud VLM routing, local SoM + clicks.
+"""Coco BYOK execution pipeline — cloud VLM routing, local SoM + clicks.
 
 The screenshot is annotated locally (tools/som.py → numbered boxes + coordinate
 dict), the annotated frame goes to the active cloud VLM via LiteLLM, the returned
 box ID maps back to local (x, y) coords, and the click dispatches through the
-execution bridge (PyAutoGUI, gated by OI_AGENT_CLICK).
+execution bridge (PyAutoGUI, gated by COCO_AGENT_CLICK).
 
 CLI:
     ./.venv/bin/python tools/agent_runner.py decide --image shot.png --goal "Book a flight"
@@ -37,11 +37,11 @@ from tools.ledger_poll import (  # noqa: E402,F401
 load_dotenv()
 
 #: Active model string passed straight to LiteLLM ("openai", "anthropic/…", "openrouter/…").
-CONFIG_PATH = os.environ.get("OI_CONFIG") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+CONFIG_PATH = os.environ.get("COCO_CONFIG") or os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 #: OS-level clicks only fire when this is "1" — the agent logs a dry-run otherwise.
-CLICK_GATE = os.environ.get("OI_AGENT_CLICK") == "1"
+CLICK_GATE = os.environ.get("COCO_AGENT_CLICK") == "1"
 SYSTEM_PROMPT = (
-    "You are OpenInstinct, a friendly and highly capable life-admin assistant. Analyze the "
+    "You are Coco, a friendly and highly capable life-admin assistant. Analyze the "
     "provided screenshot with numbered bounding boxes. Which box ID corresponds to the target "
     "action: '{goal}'? You MUST ALWAYS include a 'message_to_user' field in your JSON response "
     "to talk to the user, explaining what you are currently doing or asking for clarification, "
@@ -61,7 +61,7 @@ SYSTEM_PROMPT = (
     "alongside, a box_id click."
 )
 #: Seconds the runner waits for a manually provided 2FA code before skipping the field.
-CODE_TIMEOUT = int(os.environ.get("OI_CODE_TIMEOUT", "120"))
+CODE_TIMEOUT = int(os.environ.get("COCO_CODE_TIMEOUT", "120"))
 
 
 def _strip_think(raw: str) -> str:
@@ -98,8 +98,8 @@ def parse_decision(raw: str) -> dict[str, Any]:
 def query_cloud_vlm(annotated_path: str, goal: str, model: Optional[str] = None) -> dict[str, Any]:
     """SoM-annotated frame → active cloud VLM (LiteLLM) → winning box ID."""
     model = model or load_model_config()
-    if os.environ.get("OI_FAKE_VLM"):  # hermetic testing — stubs the cloud call; JSON value shapes the decision, "1" = payment ask
-        payload = os.environ["OI_FAKE_VLM"] if os.environ["OI_FAKE_VLM"] != "1" else '{"box_id": 1, "payment": true, "price": "$450"}'
+    if os.environ.get("COCO_FAKE_VLM"):  # hermetic testing — stubs the cloud call; JSON value shapes the decision, "1" = payment ask
+        payload = os.environ["COCO_FAKE_VLM"] if os.environ["COCO_FAKE_VLM"] != "1" else '{"box_id": 1, "payment": true, "price": "$450"}'
         return {"tier": "cloud_vlm", "model": "fake", "raw": "stubbed", **parse_decision(payload)}
     with open(annotated_path, "rb") as f:
         png_b64 = base64.b64encode(f.read()).decode("ascii")
@@ -219,7 +219,7 @@ def handle_totp(decision: dict[str, Any], task_id: Optional[int]) -> None:
             print(f"[agent] no 2FA code within {CODE_TIMEOUT}s — skipping {domain} field", file=sys.stderr)
             return
     if not CLICK_GATE:
-        print(f"[agent] dry-run (OI_AGENT_CLICK unset) — would click box and type {code}", file=sys.stderr)
+        print(f"[agent] dry-run (COCO_AGENT_CLICK unset) — would click box and type {code}", file=sys.stderr)
         return
     human_click(box)
     human_pause(0.4, 0.8)
@@ -254,8 +254,8 @@ def parse_fill(raw: str, card: dict[str, str]) -> list[dict[str, Any]]:
 def map_card_fields(annotated_path: str, card: dict[str, str], model: Optional[str] = None) -> list[dict[str, Any]]:
     """Second VLM pass: which numbered box takes PAN / CVV / EXP on this checkout screen."""
     model = model or load_model_config()
-    if os.environ.get("OI_FAKE_FILL"):  # hermetic testing — fixture mappings, no cloud call
-        return parse_fill(f'{{"mappings": {os.environ["OI_FAKE_FILL"]}}}', card)
+    if os.environ.get("COCO_FAKE_FILL"):  # hermetic testing — fixture mappings, no cloud call
+        return parse_fill(f'{{"mappings": {os.environ["COCO_FAKE_FILL"]}}}', card)
     with open(annotated_path, "rb") as f:
         png_b64 = base64.b64encode(f.read()).decode("ascii")
     import litellm
@@ -294,7 +294,7 @@ def fill_card_flow(decision: dict[str, Any], boxes: dict[str, dict[str, int]], a
     if not price:
         print("[agent] payment step approved but the VLM found no price — skipping card fill", file=sys.stderr)
         return
-    if os.environ.get("OI_FAKE_PRIVACY"):  # hermetic testing — no real card issued
+    if os.environ.get("COCO_FAKE_PRIVACY"):  # hermetic testing — no real card issued
         card = {"pan": "4111111111111111", "cvv": "123", "exp_month": "09", "exp_year": "2027", "spend_limit": 4950}
     else:
         card = generate_virtual_card(price)
@@ -307,7 +307,7 @@ def fill_card_flow(decision: dict[str, Any], boxes: dict[str, dict[str, int]], a
             print(f"[agent] fill mapping points at missing box {mm['box_id']} — skipped", file=sys.stderr)
             continue
         if not CLICK_GATE:
-            print(f"[agent] dry-run (OI_AGENT_CLICK unset) — would click box {mm['box_id']} and type {mm['field']}", file=sys.stderr)
+            print(f"[agent] dry-run (COCO_AGENT_CLICK unset) — would click box {mm['box_id']} and type {mm['field']}", file=sys.stderr)
             continue
         human_click(box)
         human_pause(0.3, 0.7)
@@ -341,9 +341,9 @@ def human_type(text: str) -> None:
 
 
 def execute_typing(text: str, box: dict[str, int]) -> str:
-    """Click a field, type the query, press Enter — same OI_AGENT_CLICK gate as clicks."""
+    """Click a field, type the query, press Enter — same COCO_AGENT_CLICK gate as clicks."""
     if not CLICK_GATE:
-        print(f"[agent] dry-run (OI_AGENT_CLICK unset) — would click box, type '{text}', press Enter", file=sys.stderr)
+        print(f"[agent] dry-run (COCO_AGENT_CLICK unset) — would click box, type '{text}', press Enter", file=sys.stderr)
         return "dry-run"
     human_click(box)
     human_pause(0.4, 0.9)
@@ -357,13 +357,13 @@ def execute_typing(text: str, box: dict[str, int]) -> str:
 
 
 def execute_click(box: Optional[dict[str, int]]) -> str:
-    """Execution bridge gatekeeper: OS-level click on the box center, gated by OI_AGENT_CLICK."""
+    """Execution bridge gatekeeper: OS-level click on the box center, gated by COCO_AGENT_CLICK."""
     if not box:
         print("[agent] no target box — execution skipped", file=sys.stderr)
         return "skipped"
     x, y = box["center_x"], box["center_y"]
     if not CLICK_GATE:
-        print(f"[agent] dry-run (OI_AGENT_CLICK unset) — would click ({x}, {y})", file=sys.stderr)
+        print(f"[agent] dry-run (COCO_AGENT_CLICK unset) — would click ({x}, {y})", file=sys.stderr)
         return "dry-run"
     human_click(box)
     print(f"[agent] clicked ({x}, {y})", file=sys.stderr)
@@ -391,7 +391,7 @@ def _self_check() -> None:
     conn.execute("CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, phone_number TEXT, goal TEXT, status TEXT, created_at DATETIME)")
     cur = conn.execute("INSERT INTO tasks (phone_number, goal, status, created_at) VALUES ('x', 'g', 'running', datetime('now'))")
     conn.commit()
-    os.environ["OI_DB_PATH"] = tmp_db
+    os.environ["COCO_DB_PATH"] = tmp_db
     import threading
     globals().update(DB_PATH=tmp_db)
     task_id = cur.lastrowid
@@ -428,7 +428,7 @@ classify = decide  # alias for agent-loop imports
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="OpenInstinct BYOK SoM runner")
+    p = argparse.ArgumentParser(description="Coco BYOK SoM runner")
     p.add_argument("mode", choices=["decide", "run"], nargs="?", default=None, help="decide = one decision; run = live screen decisions")
     p.add_argument("--image", help="screenshot path (decide mode; default live capture)")
     p.add_argument("--goal", default="Explore the current page", help="natural-language goal for the agent")

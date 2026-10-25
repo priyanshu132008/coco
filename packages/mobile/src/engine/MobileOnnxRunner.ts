@@ -15,7 +15,7 @@ export interface InferenceOutcome {
 }
 
 /**
- * On-device inference for openinstinct_full_v1.onnx with CoreML (iOS) / NNAPI (Android) acceleration.
+ * On-device inference for coco_full_v1.onnx with CoreML (iOS) / NNAPI (Android) acceleration.
  * Used as the fallback when the MacBook host engine (ws) is unreachable — inference travels to the device
  * with the screenshot/dom tensors the WebView bridge already produced; we just feed and softmax them.
  */
@@ -24,7 +24,7 @@ export class MobileOnnxRunner {
   private inputNames: string[] = []
 
   constructor(
-    private modelUri: string, // require('./model/openinstinct_full_v1.onnx') or a Metro asset path
+    private modelUri: string, // require('./model/coco_full_v1.onnx') or a Metro asset path
     private hostFallbackUrl?: string, // e.g. ws://192.168.1.x:8080
   ) {}
 

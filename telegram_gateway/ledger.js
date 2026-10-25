@@ -3,7 +3,7 @@
 const path = require("path");
 const Database = require("better-sqlite3");
 
-const DB_PATH = process.env.OI_DB_PATH || path.join(__dirname, "tasks.db");
+const DB_PATH = process.env.COCO_DB_PATH || process.env.OI_DB_PATH || path.join(__dirname, "tasks.db");
 
 function open() {
   const db = new Database(DB_PATH);
@@ -81,7 +81,7 @@ function createRetry(db, taskId) {
 }
 
 if (require.main === module) {
-  // self-check: create → read → flip, throwaway in-memory DB unless OI_DB_PATH set
+  // self-check: create → read → flip, throwaway in-memory DB unless COCO_DB_PATH set
   const db = open();
   const id = createTask(db, "15551234567", "self-check goal");
   const row = getStatus(db, id);

@@ -7,7 +7,7 @@ import { AndroidBridge, type MobileResult } from '../mobile/AndroidBridge.js'
 
 export type ExecutionHand = 'desktop' | 'mobile'
 
-/** Output head classes of openinstinct_full_v1.onnx (action_logits [1,4]) — the 4 action classes of our dataset schema. */
+/** Output head classes of coco_full_v1.onnx (action_logits [1,4]) — the 4 action classes of our dataset schema. */
 export const ACTION_CLASSES = ['CLICK', 'TYPE', 'PRESS_ENTER', 'SELECT'] as const
 export type NextAction = (typeof ACTION_CLASSES)[number]
 
@@ -30,7 +30,7 @@ export interface ActionInference {
 
 /**
  * Routes decisions to the desktop (web) or mobile (ADB) execution hand.
- * Model: model/openinstinct_full_v1.onnx (multi-modal) — screenshot [1,3,224,224] +
+ * Model: model/coco_full_v1.onnx (multi-modal) — screenshot [1,3,224,224] +
  * dom_structure [1,32,768] → action_logits [1,4].
  * Hand routing uses model inference only when the output head is 2-class;
  * with the current 4-class action head the URL-vs-package heuristic selects the hand.
@@ -43,7 +43,7 @@ export class Orchestrator {
   private mobile = new AndroidBridge()
 
   modelPath(): string {
-    return process.env.OI_MODEL_PATH ?? path.join(process.cwd(), 'model', 'openinstinct_full_v1.onnx')
+    return process.env.COCO_MODEL_PATH ?? path.join(process.cwd(), 'model', 'coco_full_v1.onnx')
   }
 
   /** Loads the model iff it exists. Returns how decisions will be routed. */

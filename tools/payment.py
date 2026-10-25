@@ -3,7 +3,7 @@
 
 generate_virtual_card(price_str) turns a VLM-extracted price ("$45.00") into a
 transaction-limit single-use card capped at price + 10% (taxes/fees buffer) and
-returns {pan, cvv, exp_month, exp_year}. Requires OI_PRIVACY_API_KEY in .env.
+returns {pan, cvv, exp_month, exp_year}. Requires COCO_PRIVACY_API_KEY in .env.
 
     ./.venv/bin/python tools/payment.py   # offline self-check (no network)
 """
@@ -44,7 +44,7 @@ def _post(url: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[st
 
 def generate_virtual_card(
     price_str: str,
-    memo: str = "OpenInstinct Task",
+    memo: str = "Coco Task",
     post_fn: Optional[Callable[[str, dict[str, str], dict[str, Any]], dict[str, Any]]] = None,
 ) -> dict[str, str]:
     """Create a single-use card capped at price+10%; return PAN/CVV/expiry strings.
@@ -56,9 +56,9 @@ def generate_virtual_card(
     limit_cents = parse_price(price_str)
     headers = {"Content-Type": "application/json"}
     if post_fn is None:
-        api_key = os.environ.get("OI_PRIVACY_API_KEY")
+        api_key = os.environ.get("COCO_PRIVACY_API_KEY")
         if not api_key:
-            raise RuntimeError("OI_PRIVACY_API_KEY missing from environment — add it to .env")
+            raise RuntimeError("COCO_PRIVACY_API_KEY missing from environment — add it to .env")
         headers["Authorization"] = f"api-key {api_key}"
     resp = (post_fn or _post)(
         API_URL,

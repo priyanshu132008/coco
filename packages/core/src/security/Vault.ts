@@ -3,8 +3,8 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 
-// ponytail: single-blob whole-file encryption with a 32-byte key file (~/.openinstinct/vault.key,
-// mode 600) or OI_VAULT_PASSWORD scrypt. Re-key/per-entry encryption when the threat model grows.
+// ponytail: single-blob whole-file encryption with a 32-byte key file (~/.coco/vault.key,
+// mode 600) or COCO_VAULT_PASSWORD scrypt. Re-key/per-entry encryption when the threat model grows.
 
 interface EncryptedBlob {
   v: 1
@@ -22,7 +22,7 @@ export class Vault {
   private data = new Map<string, string>()
 
   constructor(
-    private blobPath = path.join(os.homedir(), '.openinstinct', 'vault.enc'),
+    private blobPath = path.join(os.homedir(), '.coco', 'vault.enc'),
   ) {}
 
   get(key: string): string | undefined {
@@ -64,11 +64,11 @@ export class Vault {
     } catch (err) {
       // refuse writes on a broken vault — flush() with empty data would silently destroy secrets
       this.broken = true
-      throw new Error(`vault: cannot decrypt ${this.blobPath} (${err instanceof Error ? err.message : err}) — restore vault.enc or its key, or set OI_VAULT_PASSWORD`)
+      throw new Error(`vault: cannot decrypt ${this.blobPath} (${err instanceof Error ? err.message : err}) — restore vault.enc or its key, or set COCO_VAULT_PASSWORD`)
     }
   }
 
-  /** Dedicated key file: random 32 bytes, mode 600. A saved password (OI_VAULT_PASSWORD) overrides with scrypt. */
+  /** Dedicated key file: random 32 bytes, mode 600. A saved password (COCO_VAULT_PASSWORD) overrides with scrypt. */
   private keyFile(): Buffer {
     const keyFile = path.join(path.dirname(this.blobPath), 'vault.key')
     fs.mkdirSync(path.dirname(keyFile), { recursive: true })
@@ -87,7 +87,7 @@ export class Vault {
   }
 
   private deriveKey(salt: string): Buffer {
-    const pw = process.env.OI_VAULT_PASSWORD
+    const pw = process.env.COCO_VAULT_PASSWORD
     return pw ? crypto.scryptSync(pw, salt, 32) : this.keyFile()
   }
 

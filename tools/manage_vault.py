@@ -53,7 +53,7 @@ def cmd_remove(domain: str) -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="OpenInstinct TOTP vault manager")
+    p = argparse.ArgumentParser(description="Coco TOTP vault manager")
     p.add_argument("command", choices=["add", "list", "remove"])
     p.add_argument("domain", nargs="?", help="domain, e.g. github.com")
     p.add_argument("seed", nargs="?", help="base32 secret from the site's 2FA setup page")

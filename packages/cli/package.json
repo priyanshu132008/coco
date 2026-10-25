@@ -1,11 +1,11 @@
 {
-  "name": "openinstinct",
+  "name": "coco",
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "openinstinct": "../dist/openinstinct.js"
+    "coco": "../dist/coco.js"
   },
   "dependencies": {
-    "@openinstinct/core": "*"
+    "@coco/core": "*"
   }
 }

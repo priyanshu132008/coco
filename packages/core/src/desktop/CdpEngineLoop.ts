@@ -154,7 +154,7 @@ export class CdpEngineLoop {
     const img = join(dir, `step_${Date.now()}_${process.pid}.png`)
     writeFileSync(img, png)
     const execFileP = promisify(execFile)
-    const py = process.env.OI_PYTHON ?? join(root, '.venv', 'bin', 'python')
+    const py = process.env.COCO_PYTHON ?? join(root, '.venv', 'bin', 'python')
     const { stdout } = await execFileP(py, [join(root, 'tools', 'agent_runner.py'), 'decide', '--image', img, '--goal', goal], {
       cwd: root, // runner resolves the model path relative to the repo root
       timeout: 170_000,

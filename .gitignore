@@ -19,7 +19,7 @@ __pycache__/
 dataset.zip
 .wwebjs_cache/
 config.json.bak
-com.openinstinct.gateway.plist
+com.coco.gateway.plist
 packages/dashboard/.next/
 *.tsbuildinfo
 .browser_profile*

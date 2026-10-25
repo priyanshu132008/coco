@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end HitL gate test for the browser-use driver, fully offline:
 fake local checkout page → agent stops pre-payment → approval_required → ledger flip
-→ OI_FAKE_PRIVACY card → finisher agent runs → Done.
+→ COCO_FAKE_PRIVACY card → finisher agent runs → Done.
     ./.venv-bu/bin/python tools/test_browser_hitl.py
 """
 import json
@@ -50,11 +50,11 @@ conn.close()
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env = {
     **os.environ,
-    "OI_DB_PATH": tmp_db,
-    "OI_APPROVAL_TIMEOUT": "90",
-    "OI_FAKE_PRIVACY": "1",
-    "OI_BU_HEADLESS": "1",
-    "OI_BU_MAX_STEPS": "5",  # keep the test snappy — 5 steps is enough for a one-page stop
+    "COCO_DB_PATH": tmp_db,
+    "COCO_APPROVAL_TIMEOUT": "90",
+    "COCO_FAKE_PRIVACY": "1",
+    "COCO_BU_HEADLESS": "1",
+    "COCO_BU_MAX_STEPS": "5",  # keep the test snappy — 5 steps is enough for a one-page stop
 }
 proc = subprocess.Popen(
     [os.path.join(root, ".venv-bu", "bin", "python"), os.path.join(root, "tools", "browser_driver.py"),

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """End-to-end checkout contract test: approval_required → approve → (no-network) virtual card
-→ VLM fill mapping → card_filled event. All external calls stubbed via OI_FAKE_* envs.
+→ VLM fill mapping → card_filled event. All external calls stubbed via COCO_FAKE_* envs.
     ./.venv/bin/python tools/test_fill.py
 """
 import json
@@ -25,11 +25,11 @@ conn.close()
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 env = {
     **os.environ,
-    "OI_DB_PATH": tmp_db,
-    "OI_APPROVAL_TIMEOUT": "60",
-    "OI_FAKE_VLM": "1",  # payment=true, price $450
-    "OI_FAKE_PRIVACY": "1",
-    "OI_FAKE_FILL": '[{"field": "PAN", "box_id": 1}, {"field": "CVV", "box_id": 2}, {"field": "EXP", "box_id": 3}]',
+    "COCO_DB_PATH": tmp_db,
+    "COCO_APPROVAL_TIMEOUT": "60",
+    "COCO_FAKE_VLM": "1",  # payment=true, price $450
+    "COCO_FAKE_PRIVACY": "1",
+    "COCO_FAKE_FILL": '[{"field": "PAN", "box_id": 1}, {"field": "CVV", "box_id": 2}, {"field": "EXP", "box_id": 3}]',
 }
 proc = subprocess.Popen(
     [os.path.join(root, ".venv", "bin", "python"), os.path.join(root, "tools", "agent_runner.py"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** OpenInstinct Telegram Command Center — grammY long polling.
+/** Coco Telegram Command Center — grammY long polling.
  *  commands in → tasks.db rows (telegram_gateway/tasks.db) → python agent_runner in background →
  *  approval asks / 2FA code asks back to the chat, decisions back into the ledger. */
 const { Bot, InputFile } = require("grammy");
@@ -9,9 +9,9 @@ require("dotenv").config({ path: path.join(__dirname, "..", ".env") }); // same 
 const ledger = require("./ledger");
 
 const db = ledger.open();
-// browser-use layer needs py>=3.11 → .venv-bu; set OI_RUNNER=agent_runner.py for the legacy
+// browser-use layer needs py>=3.11 → .venv-bu; set COCO_RUNNER=agent_runner.py for the legacy
 // SoM/pyautogui execution (needs the default .venv)
-const NEW_DRIVER = process.env.OI_RUNNER === "agent_runner.py";
+const NEW_DRIVER = process.env.COCO_RUNNER === "agent_runner.py";
 const AGENT = path.join(__dirname, "..", NEW_DRIVER ? ".venv" : ".venv-bu", "bin", "python");
 const RUNNER_NAME = NEW_DRIVER ? "agent_runner.py" : "browser_driver.py";
 const RUNNER = path.join(__dirname, "..", "tools", RUNNER_NAME);
@@ -21,9 +21,9 @@ const STOP_RE = /^\/?(stop|stoppp|cancel)[\s!.]*$/i;
 const CODE_RE = /^\s*(?:otp\s*)?(\d{6})\s*$/i; // "123456" or "otp 123456"
 const RETRY_RE = /^\/?(retry|again|resume)\b/i; // after a Cloudflare pause
 //: The local vault UI (tools/vault_server.py, spawned below) serves the credential form.
-const VAULT_URL = process.env.OI_VAULT_URL || "http://127.0.0.1:8081/vault/fill";
+const VAULT_URL = process.env.COCO_VAULT_URL || "http://127.0.0.1:8081/vault/fill";
 //: How long to wait for a SIGINT'ed runner to release the browser profile lock.
-const SHUTDOWN_TIMEOUT = Number(process.env.OI_SHUTDOWN_TIMEOUT || 15000);
+const SHUTDOWN_TIMEOUT = Number(process.env.COCO_SHUTDOWN_TIMEOUT || 15000);
 
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   console.error("[gateway] TELEGRAM_BOT_TOKEN missing from environment — add it to .env");
@@ -38,7 +38,7 @@ const captchaBlocked = new Map(); // chat id → {taskId, domain} paused on a Cl
 
 bot.catch((err) => console.error("[gateway] bot error:", err.error?.stack || err.error?.message || err.error));
 
-bot.command("start", (ctx) => ctx.reply("OpenInstinct agent online. Text me a goal — e.g. 'Find me a flight to Delhi'."));
+bot.command("start", (ctx) => ctx.reply("Coco agent online. Text me a goal — e.g. 'Find me a flight to Delhi'."));
 
 bot.on("message:text", async (ctx) => {
   const chatId = ctx.chat.id;
@@ -231,11 +231,11 @@ function summarizeStderr(text) {
 function spawnRunner(taskId, goal, chatId) {
   const { spawn } = require("child_process");
   const args = [RUNNER, "run", "--goal", goal, "--task-id", String(taskId)];
-  if (NEW_DRIVER) args.push("--steps", process.env.OI_AGENT_STEPS || "5"); // browser-driver self-paces (OI_BU_MAX_STEPS)
+  if (NEW_DRIVER) args.push("--steps", process.env.COCO_AGENT_STEPS || "5"); // browser-driver self-paces (COCO_BU_MAX_STEPS)
   const child = spawn(
     AGENT,
     args,
-    { cwd: path.join(__dirname, ".."), env: { ...process.env, OI_AGENT_CLICK: "1" }, detached: true }
+    { cwd: path.join(__dirname, ".."), env: { ...process.env, COCO_AGENT_CLICK: "1" }, detached: true }
   );
   child.unref(); // fire-and-forget: the bot loop must never block on the agent
   if (child.pid) ledger.setPid(db, taskId, child.pid); // /stop kills this
@@ -367,7 +367,7 @@ function spawnRunner(taskId, goal, chatId) {
 // Vault web UI on :8081 (mobile form in front of the encrypted vault) — best effort:
 // it fails quietly if port 8081 is taken (e.g. an existing server or daemon already runs it)
 spawn(
-  process.env.OI_VAULT_PYTHON || path.join(__dirname, "..", ".venv-bu", "bin", "python"),
+  process.env.COCO_VAULT_PYTHON || path.join(__dirname, "..", ".venv-bu", "bin", "python"),
   [path.join(__dirname, "..", "tools", "vault_server.py")],
   { cwd: path.join(__dirname, ".."), detached: true, stdio: "ignore" }
 ).unref();

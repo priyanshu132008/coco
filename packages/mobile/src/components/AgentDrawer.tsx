@@ -65,7 +65,7 @@ export function AgentDrawer(props: AgentDrawerProps): React.ReactElement {
   return (
     <View {...pan.panHandlers} style={{ ...styles.host }}>
       <Animated.View style={[styles.drawer, { transform: [{ translateX: anim }], width: DRAWER_W, height: '100%' }]}>
-        <Text style={styles.title}>⚡ OpenInstinct</Text>
+        <Text style={styles.title}>⚡ Coco</Text>
 
         <View style={styles.row}>
           <TextInput

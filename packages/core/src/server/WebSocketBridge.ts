@@ -16,11 +16,11 @@ export class WebSocketBridge {
     this.wss = new WebSocketServer({ port })
     this.wss.on('connection', (client) => {
       client.send(
-        '[OpenInstinct] connected — send {"type":"EXECUTE_INTENT","intent":"navigate","url":"https://example.com"}',
+        '[Coco] connected — send {"type":"EXECUTE_INTENT","intent":"navigate","url":"https://example.com"}',
       )
       client.on('message', (raw) => this.onMessage(client, String(raw)))
     })
-    console.log(`[OpenInstinct] WebSocket bridge listening on ws://localhost:${port}`)
+    console.log(`[Coco] WebSocket bridge listening on ws://localhost:${port}`)
   }
 
   broadcast(text: string): void {
@@ -34,15 +34,15 @@ export class WebSocketBridge {
     try {
       msg = JSON.parse(raw)
     } catch {
-      client.send('[OpenInstinct] malformed message — expected JSON {"type":"EXECUTE_INTENT",...}')
+      client.send('[Coco] malformed message — expected JSON {"type":"EXECUTE_INTENT",...}')
       return
     }
     if (msg.type !== 'EXECUTE_INTENT') {
-      client.send(`[OpenInstinct] unknown message type "${msg.type}" — expected EXECUTE_INTENT`)
+      client.send(`[Coco] unknown message type "${msg.type}" — expected EXECUTE_INTENT`)
       return
     }
     if (!msg.url) {
-      client.send('[OpenInstinct] EXECUTE_INTENT needs a "url" field')
+      client.send('[Coco] EXECUTE_INTENT needs a "url" field')
       return
     }
     try {
@@ -50,10 +50,10 @@ export class WebSocketBridge {
       const result = await this.browser.navigateAndExtract(msg.url)
       const nodeCount = (JSON.parse(result.domTree) as unknown[]).length
       this.broadcast(
-        `[OpenInstinct] ✅ executed "${msg.intent}" on ${msg.url} — extracted ${nodeCount} interactive nodes, screenshot ${(result.screenshot.length / 1024).toFixed(1)} KB. Available actions: click, type, scroll, extract.`,
+        `[Coco] ✅ executed "${msg.intent}" on ${msg.url} — extracted ${nodeCount} interactive nodes, screenshot ${(result.screenshot.length / 1024).toFixed(1)} KB. Available actions: click, type, scroll, extract.`,
       )
     } catch (err) {
-      this.broadcast(`[OpenInstinct] ❌ "${msg.intent}" failed: ${err instanceof Error ? err.message : String(err)}`)
+      this.broadcast(`[Coco] ❌ "${msg.intent}" failed: ${err instanceof Error ? err.message : String(err)}`)
     }
   }
 }

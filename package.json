@@ -1,15 +1,15 @@
 {
-  "name": "openinstinct",
+  "name": "coco",
   "version": "0.1.0",
   "private": true,
   "bin": {
-    "openinstinct": "dist/openinstinct.js"
+    "coco": "dist/coco.js"
   },
   "workspaces": ["packages/*"],
   "scripts": {
     "build:core": "tsc -p packages/core/tsconfig.json",
-    "start:cli": "sh build.sh && node dist/openinstinct.js",
-    "live": "sh build.sh && node dist/openinstinct.js run",
+    "start:cli": "sh build.sh && node dist/coco.js",
+    "live": "sh build.sh && node dist/coco.js run",
     "agent": "esbuild scripts/run_agent.ts --platform=node --bundle --external:onnxruntime-node --external:playwright-extra --external:playwright --external:puppeteer-extra-plugin-stealth --external:ws --outfile=dist/run_agent.js && node dist/run_agent.js"
   },
   "dependencies": {
