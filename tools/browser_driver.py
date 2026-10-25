@@ -126,6 +126,17 @@ SCROLL_RULE = (
     "SCROLL LIMIT: If you scroll 3 times without finding your target, STOP SCROLLING. "
     "Immediately click an available product, use the search bar, or report failure."
 )
+
+#: Pinned to every agent prompt (main + gate-round resumes): an agent stranded on a login
+#: wall must fetch credentials from the vault via the request_user_credentials tool —
+#: never give up on login while the vault may hold the account.
+LOGIN_RULE = (
+    "LOGIN RULE: If you encounter a login wall, you MUST use the request_user_credentials "
+    "tool to fetch the login details from the vault. Never give up on a login page without "
+    "trying to fetch credentials. Enter the returned username/email and password exactly "
+    "into their fields, never print them in a chat message, and never type them anywhere "
+    "you are not sure is the site's own login form."
+)
 #: Pinned to every task prompt (main + gate-round resume agents) so the LLM reaches for the
 #: custom vault tool instead of guessing into modals it has no data for.
 CUSTOM_TOOL_RULE = (
@@ -224,6 +235,24 @@ def card_for_payment(goal: str, domain: Optional[str], price: str):
         {"card_number": card["pan"], "cvv": card["cvv"], "expiry": f"{card['exp_month']}/{card['exp_year'][-2:]}"},
         f"a virtual card capped at {card['spend_limit'] / 100:.2f} currency units",
     )
+
+
+def chat_safe_text(value, history=None) -> str:
+    """Chat-safe rendering of a browser-use result: a plain string stays, an object repr
+    ('AgentHistoryList object at 0x…') never reaches Telegram — it degrades to the last
+    action's failure_reason/extracted_content, or a neutral fallback."""
+    out = value if isinstance(value, str) else ("" if value is None else str(value))
+    if "object at 0x" in out or "AgentHistoryList" in out:
+        fb = ""
+        for h in reversed(getattr(history, "history", []) or []):
+            for act in reversed(h.result):
+                fb = act.failure_reason or act.extracted_content or ""
+                if fb and "object at 0x" not in fb:
+                    break
+            if fb and "object at 0x" not in fb:
+                break
+        out = fb or f"agent finished without a readable result ({getattr(history, 'number_of_steps', '?')} steps)"
+    return out.strip()[:1000]
 
 
 def target_domain(goal: str) -> Optional[str]:
@@ -575,6 +604,37 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
                 return "No delivery address was provided in time — skip entering any location and continue the task without it."
         return f"Delivery address received. Type exactly this into the location/address field: {addr}"
 
+    # login walls: fetch the account's credentials from the encrypted vault (decrypted in
+    # memory only). The result text carries them — the model must type them into the site's
+    # own fields; the gateway relays only explicit chat events, so a leak needs a rule
+    # break (LOGIN_RULE bans echoing credentials in chat).
+    # ponytail: plaintext brief stopover in the LLM context; a sensitive_data placeholder
+    # swap mid-run isn't supported by this browser-use build — switch to that when it is.
+    @controller.action(
+        "Call this tool immediately if you reach a login/sign-in wall (username, email or "
+        "password fields, SSO) and need the account's login details. The vault stores them."
+    )
+    async def request_user_credentials() -> str:
+        if not domain:
+            return "No target site in this goal — there is no vault account to fetch. Skip login and continue without it."
+        if not has_domain(domain):
+            print(json.dumps({"event": "vault_required", "domain": domain, "type": "credentials"}), flush=True)
+        await asyncio.to_thread(wait_for_domain, domain)  # polls vault.db; instant when already stored
+        from tools.vault import get_creds
+
+        creds = await asyncio.to_thread(get_creds, domain) or {}
+        if not (creds.get("username") and creds.get("password")):
+            return (
+                f"No credentials for {domain} arrived in time — skip login and continue the task "
+                "without the account; say so plainly in your final message."
+            )
+        return (
+            f"Vault credentials for {domain} retrieved. Type the username/email exactly this into "
+            f"the identifier field: {creds['username']} — and this into the password field: "
+            f"{creds['password']}. Then submit. NEVER repeat these values in a chat message or "
+            "type them outside this login form."
+        )
+
     common = dict(
         llm=llm,
         browser_session=session,
@@ -591,7 +651,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             f"{goal}{addr_line}\n\n"
             f"{LOCATION_RULES}\n\n"
             "RULES: "
-            f"{SCROLL_RULE} "
+            f"{SCROLL_RULE} {LOGIN_RULE} "
             "If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
             "message must be exactly 'OTP_REQUIRED' (plus the site name) — NEVER guess, wait out, "
             "or bypass codes. If the site is missing an OTP field entirely, do NOT mention OTP at "
@@ -650,7 +710,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
                 task=(
                     f"An OTP was provided: <otp>. Find the OTP/verification field on the current page, "
                     f"type the code into it and submit. Then continue the original goal below if it is "
-                    f"still reachable.\n{SCROLL_RULE}\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
+                    f"still reachable.\n{SCROLL_RULE} {LOGIN_RULE}\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
                 ),
                 sensitive_data={"otp": code},
                 **common,
@@ -672,7 +732,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
                 task=(
                     f"A delivery address was provided: <address>. On the current page, set this "
                     f"delivery address/pincode (type it or select it), confirm, then continue the "
-                    f"original goal below.\n{SCROLL_RULE}\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
+                    f"original goal below.\n{SCROLL_RULE} {LOGIN_RULE}\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
                 ),
                 sensitive_data={"address": location},
                 **common,
@@ -717,15 +777,15 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
     # LLM failures (402/rate limit), provider errors, or max steps exhausted. Placed AFTER the
     # segment gates above — they exit via continue and would also read as "unsuccessful" here.
     completed = history.is_successful()
-    llm_errors = [str(e) for e in history.errors() if e]
+    # clean strings only — a repr'd history object must never reach the chat
+    llm_errors = [chat_safe_text(e, history) for e in history.errors() if e]
     if completed is not True:
         provider_hit = any(re.search(r"40[129]|rate.?limit|insufficient|quota|credit", e, re.I) for e in llm_errors)
         detail = (
             "LLM provider error (402/rate limit) — consecutive calls failed."
             if provider_hit
-            else llm_errors[-1].strip()[:300]
-            if llm_errors
-            else f"agent stopped without completing the goal ({history.number_of_steps} steps, no final result)"
+            else (llm_errors[-1][:300] if llm_errors else "")
+            or f"agent stopped without completing the goal ({history.number_of_steps} steps, no final result)"
         )
         try:
             emit_frame("failed", await session.take_screenshot(format="png"), task_id)
@@ -733,7 +793,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             emit_frame("failed", next(iter(last_frame), None), task_id)
         await session.stop()
         # one failure message — the gateway's 'error' handler renders "❌ Task #N failed: <msg>"
-        emit({"type": "error", "message": detail})
+        emit({"type": "error", "message": chat_safe_text(detail, history)})
         return 3
 
     try:
@@ -741,7 +801,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
     except Exception:
         emit_frame("done", next(iter(last_frame), None), task_id)
     await session.stop()
-    emit({"type": "chat", "message": f"Done. {str(result)[:1000]}"})
+    emit({"type": "chat", "message": f"Done. {chat_safe_text(result, history)}"})
     return 0
 
 
@@ -954,6 +1014,12 @@ if __name__ == "__main__":
         finally:
             for _k in ("COCO_FAKE_PRIVACY", "COCO_ENV_PATH", "COCO_VAULT_DB"):
                 os.environ.pop(_k, None)
+
+        # chat_safe_text: a repr'd history object must degrade to a readable fallback
+        assert chat_safe_text("order placed, total ₹499") == "order placed, total ₹499"
+        _bad = "AgentHistoryList object at 0x107f3f1a0"
+        _safe = chat_safe_text(_bad)
+        assert _safe and "AgentHistoryList" not in _safe and "object at 0x" not in _safe, _safe
 
         print("[bu] self-check ok — price/checkout/otp/domain/vault-regex + config + profile-lock + captcha + card-source", file=sys.stderr)
         sys.exit(0)

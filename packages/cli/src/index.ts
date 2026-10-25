@@ -150,11 +150,39 @@ function spawnGateway(): void {
   })
 }
 
+/** Boot out (and disable across logins) any LaunchAgents unit that runs the Telegram
+ *  gateway — launchd KeepAlive vs a foreground `coco online` gateway is what produces the
+ *  Telegram 409 Conflict ("terminated by other getUpdates request"). Returns units booted. */
+function bootoutGatewayLaunchd(): number {
+  if (process.platform !== 'darwin') return 0
+  let booted = 0
+  try {
+    const uid = process.getuid?.() ?? 501
+    for (const f of readdirSync(join(homedir(), 'Library/LaunchAgents'))) {
+      if (!f.endsWith('.plist')) continue
+      const body = readFileSync(join(homedir(), 'Library/LaunchAgents', f), 'utf8')
+      if (!body.includes('telegram_gateway/gateway.js')) continue
+      const label = f.replace(/\.plist$/, '')
+      spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { stdio: 'ignore' })
+      // disable persists the unload across logins — RunAtLoad must not bring a rival back
+      spawnSync('launchctl', ['disable', `gui/${uid}/${label}`], {
+        stdio: 'ignore',
+      })
+      console.log(`✔ launchd service ${label} unloaded + disabled — this gateway is the only one`)
+      booted += 1
+    }
+  } catch {
+    // no LaunchAgents dir / unreadable — nothing to boot out
+  }
+  return booted
+}
+
 /** coco online — the bot only. Long polling + per-task python runner subprocesses. */
 function onlineCommand(): void {
   console.log('  ⚡ Coco is online and listening…')
   console.log('  · Telegram: message your bot (Ctrl-C to stop; `coco stop` kills cleanly)')
   console.log('  · Tasks: the runner runs each goal as an isolated subprocess (5 min hard cap, COCO_TASK_TIMEOUT)') // prettier-ignore
+  bootoutGatewayLaunchd() // no launchd twin fighting over getUpdates → 409s
   spawnGateway()
 }
 
@@ -166,23 +194,9 @@ function stopCommand(): void {
     return
   }
   // The gateway may run under launchd KeepAlive — pkill alone is whack-a-mole: launchd
-  // respawns it instantly. Boot any LaunchAgents unit that runs gateway.js out first.
-  if (process.platform === 'darwin') {
-    try {
-      const uid = process.getuid?.() ?? 501
-      for (const f of readdirSync(join(homedir(), 'Library/LaunchAgents'))) {
-        if (!f.endsWith('.plist')) continue
-        const body = readFileSync(join(homedir(), 'Library/LaunchAgents', f), 'utf8')
-        if (!body.includes('telegram_gateway/gateway.js')) continue
-        const label = f.replace(/\.plist$/, '')
-        spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { stdio: 'ignore' })
-        console.log(`✔ stopped launchd service ${label} (KeepAlive would respawn it)`)
-        stopped += 1
-      }
-    } catch {
-      // no LaunchAgents dir / unreadable — plain pkill below still applies
-    }
-  }
+  // respawns it instantly. Boot the unit out (and disable it) before the pkill sweep.
+  const booted = bootoutGatewayLaunchd()
+  if (booted) console.log(`✔ stopped ${booted} launchd gateway service(s)`)
   const targets: [string, string][] = [
     ['gateway', 'telegram_gateway/gateway.js'],
     ['browser driver (worker)', 'tools/browser_driver.py'],
@@ -231,7 +245,7 @@ async function runCommand(prompt: string): Promise<void> {
 if (cmd === 'configure') {
   console.log('▸ booting the dashboard — the setup page is linked from the home page')
   void serveOrOpen('/')
-} else if (cmd === 'online') {
+} else if (cmd === 'online' || cmd === 'start') { // 'start' stays an alias — older installs typed it
   onlineCommand()
 } else if (cmd === 'stop') {
   stopCommand()

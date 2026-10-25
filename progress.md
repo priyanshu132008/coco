@@ -462,3 +462,23 @@ Status: **done** — verified end to end.
   3s later nothing running, nothing respawned.
 - Note: coco start runs the gateway in the foreground (no launchd) until the next
   reboot/login reloads the plist — same as before, stop is just effective now.
+
+## 2026-10-25 — 409 conflict killed, clean error strings, vault credential tool
+- cli: bootoutGatewayLaunchd() — bootout + `launchctl disable` (persists across logins) for
+  any LaunchAgents unit running telegram_gateway/gateway.js. Called by both `coco stop`
+  and `coco online`, so the foreground gateway is always the only poller → no 409
+  "terminated by other getUpdates". `coco start` now aliases `coco online`. Live-verified:
+  unit shows 'com.openinstinct.gateway => disabled', nothing respawns.
+- browser_driver.py: chat_safe_text — history objects / 'object at 0x' reprs never reach
+  Telegram; the failure path and the Done message degrade to the last action's
+  failure_reason/extracted_content or a readable fallback. llm_errors also sanitized.
+- browser_driver.py: new controller tool request_user_credentials — on a login wall it
+  fetches (decrypts) the vault account for the target domain, emits vault_required and
+  waits (same wait_for_domain poll as addresses), then hands username+password to the
+  agent with strict not-in-chat rules. LOGIN_RULE pinned to the main prompt + both
+  resume prompts: always fetch from the vault, never give up on a login wall.
+  ponytail: creds exist briefly as plaintext in the tool result (LLM context only) —
+  switch to mid-run sensitive_data placeholders when this browser-use build supports it.
+- --check extends chat_safe_text (repr → readable fallback, plain strings pass through).
+- launchd gateway left bootout+disabled on this Mac — the bot is OFF until the user runs
+  `coco online`.
