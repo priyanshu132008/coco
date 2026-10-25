@@ -308,7 +308,9 @@ function isAlive(pid) {
 function vaultKeyboard(domain, gate) {
   const url = `${VAULT_URL}?domain=${encodeURIComponent(domain || "")}&gate=${gate}`;
   return {
-    inline_keyboard: [[{ text: "🔒 Open Secure Vault", web_app: { url } }]],
+    // plain url button: Telegram web_app buttons must be HTTPS and localhost can't ever be —
+    // the browser opens the local vault page instead (works on this Mac only)
+    inline_keyboard: [[{ text: "🔒 Open Secure Vault", url }]],
   };
 }
 

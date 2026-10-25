@@ -445,3 +445,9 @@ Status: **done** — verified end to end.
   removed; missing params get clarified, final goals go straight to dispatch_browser.
 - test_router.js: added a capability probe ("send a follow-up email to my bank" → must not
   refuse). Live 3-turn check green: vague → chat, concrete → tool call, email task → accepted.
+
+## 2026-10-25 — Vault button: web_app → inline url
+- gateway.js vaultKeyboard: Telegram 400s on web_app buttons unless HTTPS; localhost can
+  never be. Swapped to a plain url inline button — the native browser opens
+  http://localhost:3000/vault. Works only on the Mac itself; a public/tunneled HTTPS vault
+  URL is the real fix for phone use (ponytail note in code).
