@@ -118,6 +118,13 @@ LOCATION_RULES = (
     "address/location screen, stop and reply EXACTLY 'LOCATION_REQUIRED' plus the site name — "
     "never invent or pick addresses."
 )
+
+#: Anti-loop rule, pinned to every agent prompt (main + gate-round resumes): an endless
+#: scroll loop burns steps and never hits the target.
+SCROLL_RULE = (
+    "SCROLL LIMIT: If you scroll 3 times without finding your target, STOP SCROLLING. "
+    "Immediately click an available product, use the search bar, or report failure."
+)
 #: Pinned to every task prompt (main + gate-round resume agents) so the LLM reaches for the
 #: custom vault tool instead of guessing into modals it has no data for.
 CUSTOM_TOOL_RULE = (
@@ -558,7 +565,9 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
         task=(
             f"{goal}{addr_line}\n\n"
             f"{LOCATION_RULES}\n\n"
-            "RULES: If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
+            "RULES: "
+            f"{SCROLL_RULE} "
+            "If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
             "message must be exactly 'OTP_REQUIRED' (plus the site name) — NEVER guess, wait out, "
             "or bypass codes. If the site is missing an OTP field entirely, do NOT mention OTP at "
             "all. If you reach a page for payment, checkout, or confirming a purchase, STOP there — "
@@ -615,7 +624,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
                 task=(
                     f"An OTP was provided: <otp>. Find the OTP/verification field on the current page, "
                     f"type the code into it and submit. Then continue the original goal below if it is "
-                    f"still reachable.\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
+                    f"still reachable.\n{SCROLL_RULE}\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
                 ),
                 sensitive_data={"otp": code},
                 **common,
@@ -637,7 +646,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
                 task=(
                     f"A delivery address was provided: <address>. On the current page, set this "
                     f"delivery address/pincode (type it or select it), confirm, then continue the "
-                    f"original goal below.\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
+                    f"original goal below.\n{SCROLL_RULE}\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
                 ),
                 sensitive_data={"address": location},
                 **common,

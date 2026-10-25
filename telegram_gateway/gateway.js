@@ -26,6 +26,46 @@ const VAULT_URL = process.env.COCO_VAULT_URL || "http://127.0.0.1:3000/vault";
 //: How long to wait for a SIGINT'ed runner to release the browser profile lock.
 const SHUTDOWN_TIMEOUT = Number(process.env.COCO_SHUTDOWN_TIMEOUT || 15000);
 
+//: Conversational router: the user's configured OpenAI-compatible model decides whether
+//: the message is chat (clarify the goal) or a finalized browser task (dispatch_browser).
+const LLM_BASE = (process.env.OPENAI_API_BASE || "https://api.openai.com/v1").replace(/\/+$/, "");
+const LLM_KEY = process.env.OPENAI_API_KEY;
+const LLM_MODEL = (() => {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "config.json"), "utf8"));
+    // strip the openai/ prefix — the OpenAI-compatible endpoint takes bare model names
+    return cfg.active_model.replace(/^openai\//, "");
+  } catch {
+    return "gpt-4o-mini";
+  }
+})();
+const CHAT_HISTORY = new Map(); // chat id → [{role, content}] (capped, in-memory)
+
+const ROUTER_PROMPT =
+  "You are Coco, a friendly browser-automation assistant talking to a user on Telegram. " +
+  "Chat naturally — understand their goal, ask one short clarifying question if anything that the " +
+  "browser agent would need is missing or ambiguous (site, what to find/buy, budget, dates, quantity). " +
+  "When the goal is final AND self-contained, call dispatch_browser; don't repeat it back, just call it. " +
+  "Never promise to do anything a browser agent can't (no calls, emails, app installs, real payments you weren't told to make). " +
+  "Keep replies 1-3 short sentences, casual, plain text (no markdown headers).";
+
+// Stop any task still active for this chat → ledger row → spawn. Used by the router and
+// the no-router fallback alike.
+async function dispatchTask(chatId, goal) {
+  const active = ledger.activeTasksForChat(db, chatId);
+  for (const prev of active) {
+    const stopped = await stopActiveTask(prev);
+    if (stopped) {
+      await bot.api.sendMessage(chatId, `♻️ Stopped the previous task #${prev.id} — starting the new one.`)
+        .catch((e) => console.error("[gateway] handoff msg failed:", e.message));
+    }
+  }
+  const taskId = ledger.createTask(db, String(chatId), goal);
+  console.log(`[gateway] task ${taskId} created for chat ${chatId}: "${goal}"`);
+  spawnRunner(taskId, goal, chatId);
+  return taskId;
+}
+
 if (!process.env.TELEGRAM_BOT_TOKEN) {
   console.error("[gateway] TELEGRAM_BOT_TOKEN missing from environment — add it to .env");
   process.exit(2);
@@ -134,27 +174,83 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // new command → stop any task still active for this chat → ledger row → ack → spawn
+  // conversational router: history in → a natural chat reply, or a dispatched browser task
+  // (dispatch_browser fires only once the router model considers the goal fully defined)
   try {
-    const active = ledger.activeTasksForChat(db, chatId);
-    for (const prev of active) {
-      const stopped = await stopActiveTask(prev);
-      if (stopped) {
-        await ctx.reply(`♻️ Stopped the previous task #${prev.id} — starting the new one.`);
-      }
+    if (!LLM_KEY) throw new Error("no OPENAI_API_KEY — router unavailable");
+    const routed = await routeToLLM(chatId, text);
+    rememberTurn(chatId, text, routed.message || `dispatched: ${routed.dispatch}`);
+    if (routed.dispatch) {
+      const taskId = await dispatchTask(chatId, routed.dispatch);
+      console.log(`[gateway] router dispatched task ${taskId} for chat ${chatId}: "${routed.dispatch}"`);
+      await ctx.reply(`✈️ On it — spawned the browser agent for:\n"${routed.dispatch}"\n\nI'll ping you here as it works.`);
+    } else {
+      await ctx.reply(routed.message);
     }
-
-    const taskId = ledger.createTask(db, String(chatId), text);
-    console.log(`[gateway] task ${taskId} created for chat ${chatId}: "${text}"`);
-    await ctx.reply(`Task #${taskId} received. Booting local agent...`);
-
-    const child = spawnRunner(taskId, text, chatId);
-    child.on("close", () => pending.delete(chatId)); // freed for the next command
   } catch (e) {
-    console.error("[gateway] task dispatch failed:", e.message);
-    await ctx.reply(`Failed to boot the agent: ${e.message}`);
+    // router unavailable → old direct behavior: the message itself is the goal
+    console.error("[gateway] router failed, dispatching goal directly:", e.message);
+    try {
+      await dispatchTask(chatId, text);
+      await ctx.reply(`Booting the local agent for: "${text}"`);
+    } catch (e2) {
+      console.error("[gateway] task dispatch failed:", e2.message);
+      await ctx.reply(`Failed to boot the agent: ${e2.message}`);
+    }
   }
 });
+
+// Send the whole recent history plus the router system prompt and the dispatch tool.
+// Returns {message} for chat, or {dispatch: goal} when the model called the tool.
+async function routeToLLM(chatId, text) {
+  const hist = [...(CHAT_HISTORY.get(chatId) || []), { role: "user", content: text }];
+  const res = await fetch(`${LLM_BASE}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${LLM_KEY}` },
+    body: JSON.stringify({
+      model: LLM_MODEL,
+      messages: [{ role: "system", content: ROUTER_PROMPT }, ...hist.slice(-16)],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "dispatch_browser",
+            description:
+              "Spawn the local browser agent to execute a goal on a real website. " +
+              "Call this ONLY when the user's goal is final and self-contained: target site, what to do " +
+              "(find / buy / extract), and any constraints like budget, dates or quantity are all clear. " +
+              "While anything is ambiguous, ask the user instead.",
+            parameters: {
+              type: "object",
+              properties: {
+                goal: { type: "string", description: "The complete, self-contained instruction for the browser agent, including site, action and constraints." },
+              },
+              required: ["goal"],
+            },
+          },
+        },
+      ],
+      tool_choice: "auto",
+      temperature: 0.3,
+    }),
+  });
+  if (!res.ok) throw new Error(`router API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const msg = (await res.json()).choices?.[0]?.message;
+  const call = msg?.tool_calls?.find((t) => t.function?.name === "dispatch_browser");
+  if (call) {
+    const goal = JSON.parse(call.function.arguments || "{}").goal;
+    if (!goal) throw new Error("router dispatched an empty goal");
+    return { dispatch: goal };
+  }
+  return { message: msg?.content || "Didn't catch that — could you rephrase?" };
+}
+
+function rememberTurn(chatId, user, assistant) {
+  const hist = (CHAT_HISTORY.get(chatId) || []).concat(
+    [{ role: "user", content: user }, { role: "assistant", content: assistant }]
+  );
+  CHAT_HISTORY.set(chatId, hist.slice(-20)); // cap in-memory history
+}
 
 // SIGINT the runner of a still-active task and wait for it to shut down cleanly.
 // The runner releases the browser profile lock on exit — without this wait the next

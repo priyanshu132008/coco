@@ -409,3 +409,18 @@ Status: **done** — verified end to end.
   → config.json verbatim → byok resolves the same string → browser_driver's ChatLiteLLM.
   (A zombie next dev briefly hijacked a first test POST and rewrote the real .env/config.json
   with the same values; verified both intact afterwards.)
+
+## 2026-10-25 — Conversational gateway + scroll ban
+- gateway.js: messages not claimed by the hard gates (stop, /vault, OTP code, approve/deny,
+  address, captcha retry) now go through a router LLM — the user's configured OpenAI-
+  compatible model (config.json.active_model → OPENAI_API_BASE) with a `dispatch_browser`
+  tool + per-chat in-memory history (~16 msgs sent, 20 kept). Robotic "Task #N received"
+  acks are gone; vague goals get natural clarifying questions instead of an instant spawn.
+  dispatch_browser fires only on a final self-contained goal → the single-active-task
+  handoff + ledger row + spawn moved into dispatchTask(). If the router API is
+  unreachable, it falls back to the old direct-spawn behavior with the message as the goal.
+- browser_driver.py: SCROLL_RULE pinned to every agent prompt (main + OTP/address resume
+  agents): "scroll 3 times without finding your target → STOP SCROLLING, click / search /
+  report failure". (Skipped the payment-resume agent — single form page, no scrolling.)
+- test_router.js: live 2-turn self-check (vague greeting → chat reply; concrete goal →
+  dispatch_browser tool call). Verified green against the configured model.
