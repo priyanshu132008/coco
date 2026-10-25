@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Shared HitL approval poll — works against the gateway's task ledger.
+"""Shared HitL approval poll — polls the gateway's local task ledger (tasks.db).
 
-Two backends: Supabase REST when SUPABASE_URL+SUPABASE_SERVICE_KEY are set (hosted
-deploy — Vercel webhook and the Render worker share this ledger), else the local
-tasks.db this module grew up with (self-checks, gateway-era local runs).
+The telegram gateway writes decisions/statuses here; the drivers poll while they wait.
 """
 from __future__ import annotations
 
 import os
+import sqlite3
 import time
 from pathlib import Path
 
@@ -22,136 +21,69 @@ ACTIVE_STATUSES = ("running", "booting")
 
 
 def _db() -> str:
-    # env at call time — self-checks set OI_DB_PATH after import
     return os.environ.get("OI_DB_PATH") or DB_PATH
 
 
-def _remote() -> bool:
-    # fresh each call — env may change after import
-    try:
-        from tools import supabase_client as sbc
-
-        return sbc.enabled()
-    except Exception:
-        return False
-
-
-def _sb_status(task_id: int) -> str:
-    from tools import supabase_client as sbc
-
-    row = sbc.first("tasks", f"id=eq.{task_id}", select="status")
-    return (row or {}).get("status") or "running"
-
-
-def _sb_row(table: str, task_id: int, col: str, domain: str | None = None):
-    """Latest row for the task (domain-filtered when given); None when there is none yet."""
-    from tools import supabase_client as sbc
-
-    got = sbc.rows(table, f"task_id=eq.{task_id}&order=id.desc", select=f"task_id,{col}", limit=5)
-    for row in got:
-        if domain is None or row.get("domain") in (None, "", domain):
-            return row.get(col)
-    return None
-
-
-def _active(status: str) -> bool:
-    return status in ACTIVE_STATUSES
+def _status(conn: sqlite3.Connection, task_id: int) -> str:
+    return (conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone() or ("running",))[0]
 
 
 def wait_approval(task_id: int, timeout: int | None = None, db_path: str | None = None) -> str:
     """Poll the ledger until status leaves 'running' → 'approved' | 'denied' | 'timeout'."""
-    timeout = timeout if timeout is not None else APPROVAL_TIMEOUT
-    deadline = time.monotonic() + timeout
-    if _remote():
-        while time.monotonic() < deadline:
-            status = _sb_status(task_id)
-            if not _active(status):
-                return "approved" if status == "approved" else "denied"
-            time.sleep(2.0)
-        return "timeout"
-
-    import sqlite3
-
-    db_path = db_path or _db()
-    conn = sqlite3.connect(db_path)
-    try:
-        while time.monotonic() < deadline:
-            (status,) = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone() or ("running",)
-            if status not in ACTIVE_STATUSES:
-                return "approved" if status == "approved" else "denied"
-            time.sleep(2.0)
-        return "timeout"
-    finally:
-        conn.close()
+    deadline = time.monotonic() + (timeout if timeout is not None else APPROVAL_TIMEOUT)
+    while time.monotonic() < deadline:
+        try:
+            with sqlite3.connect(db_path or _db()) as conn:
+                status = _status(conn, task_id)
+        except sqlite3.Error:
+            status = "running"  # no ledger yet (standalone run) — keep waiting
+        if status not in ACTIVE_STATUSES:
+            return "approved" if status == "approved" else "denied"
+        time.sleep(2.0)
+    return "timeout"
 
 
 def wait_manual_code(task_id: int, domain: str, timeout: int | None = None, db_path: str | None = None) -> str | None:
     """Poll pending_codes for a 2FA/OTP code relayed via chat; gives up if the task is cancelled."""
-    timeout = timeout if timeout is not None else CODE_TIMEOUT
-    deadline = time.monotonic() + timeout
-    if _remote():
-        while time.monotonic() < deadline:
-            code = _sb_row("pending_codes", task_id, "code", domain)
-            if code:
-                return code
-            if not _active(_sb_status(task_id)):
-                return None  # task cancelled while we waited
-            time.sleep(2.0)
-        return None
-
-    import sqlite3
-
-    db_path = db_path or _db()
-    while time.monotonic() < deadline:
-        try:
-            with sqlite3.connect(db_path) as conn:
-                row = conn.execute(
-                    "SELECT code FROM pending_codes WHERE task_id = ? AND (domain IS NULL OR domain = ?) "
-                    "ORDER BY rowid DESC LIMIT 1",
-                    (task_id, domain),
-                ).fetchone()
-            if row:
-                return row[0]
-            (status,) = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone() or ("running",)
-            if status not in ACTIVE_STATUSES:
-                return None  # task cancelled while we waited
-        except sqlite3.Error:
-            return None  # no ledger (standalone run) — nothing to poll
-        time.sleep(2.0)
-    return None
+    return _poll(
+        timeout if timeout is not None else CODE_TIMEOUT,
+        db_path,
+        lambda conn: conn.execute(
+            "SELECT code FROM pending_codes WHERE task_id = ? AND (domain IS NULL OR domain = ?) "
+            "ORDER BY rowid DESC LIMIT 1",
+            (task_id, domain),
+        ).fetchone(),
+        task_id,
+    )
 
 
 def wait_for_location(task_id: int, timeout: int | None = None, db_path: str | None = None) -> str | None:
     """Poll pending_locations for a delivery address relayed via chat; gives up if cancelled."""
-    timeout = timeout if timeout is not None else APPROVAL_TIMEOUT
+    return _poll(
+        timeout if timeout is not None else APPROVAL_TIMEOUT,
+        db_path,
+        lambda conn: conn.execute(
+            "SELECT location FROM pending_locations WHERE task_id = ? ORDER BY rowid DESC LIMIT 1",
+            (task_id,),
+        ).fetchone(),
+        task_id,
+    )
+
+
+def _poll(timeout: int, db_path: str | None, fetch, task_id: int) -> str | None:
+    """One decision loop: a fetched row's first column, else None on cancellation/timeout."""
     deadline = time.monotonic() + timeout
-    if _remote():
-        while time.monotonic() < deadline:
-            location = _sb_row("pending_locations", task_id, "location")
-            if location:
-                return location
-            if not _active(_sb_status(task_id)):
-                return None
-            time.sleep(2.0)
-        return None
-
-    import sqlite3
-
-    db_path = db_path or _db()
     while time.monotonic() < deadline:
         try:
-            with sqlite3.connect(db_path) as conn:
-                row = conn.execute(
-                    "SELECT location FROM pending_locations WHERE task_id = ? ORDER BY rowid DESC LIMIT 1",
-                    (task_id,),
-                ).fetchone()
-            if row:
-                return row[0]
-            (status,) = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone() or ("running",)
-            if status not in ACTIVE_STATUSES:
-                return None
+            with sqlite3.connect(db_path or _db()) as conn:
+                row = fetch(conn)
+                active = _status(conn, task_id) in ACTIVE_STATUSES
         except sqlite3.Error:
-            return None
+            return None  # no ledger (standalone run) — nothing to poll
+        if row:
+            return row[0]
+        if not active:
+            return None  # task cancelled while we waited
         time.sleep(2.0)
     return None
 
@@ -161,30 +93,16 @@ def wait_for_retry(task_id: int, timeout: int | None = None, db_path: str | None
 
     Returns True when a retry was signalled, False on timeout or cancellation.
     """
-    timeout = timeout if timeout is not None else RETRY_TIMEOUT
-    deadline = time.monotonic() + timeout
-    if _remote():
-        while time.monotonic() < deadline:
-            if _sb_row("retries", task_id, "id") is not None:
-                return True
-            if not _active(_sb_status(task_id)):
-                return False  # task cancelled while we waited
-            time.sleep(2.0)
-        return False
-
-    import sqlite3
-
-    db_path = db_path or _db()
+    deadline = time.monotonic() + (timeout if timeout is not None else RETRY_TIMEOUT)
     while time.monotonic() < deadline:
         try:
-            with sqlite3.connect(db_path) as conn:
-                row = conn.execute("SELECT id FROM retries WHERE task_id = ? ORDER BY id DESC LIMIT 1", (task_id,)).fetchone()
-            if row:
-                return True
-            (status,) = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone() or ("running",)
-            if status not in ACTIVE_STATUSES:
-                return False  # task cancelled while we waited
+            with sqlite3.connect(db_path or _db()) as conn:
+                if conn.execute("SELECT id FROM retries WHERE task_id = ? ORDER BY id DESC LIMIT 1", (task_id,)).fetchone():
+                    return True
+                active = _status(conn, task_id) in ACTIVE_STATUSES
         except sqlite3.Error:
             return False  # no ledger (standalone run)
+        if not active:
+            return False  # task cancelled while we waited
         time.sleep(2.0)
     return False

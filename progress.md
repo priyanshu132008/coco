@@ -275,3 +275,20 @@ Status: **done** — verified end to end.
   = schema never applied. Applied supabase/schema.sql via supabase CLI (db query --linked,
   project tqiskhryqvakvmwghlrn); 5 tables verified (tasks/pending_codes/pending_locations/
   retries/accounts), tasks queryable (0 rows). Worker loop errors should self-clear.
+
+## 2026-10-25 — Architectural pivot: local-first CLI (Vercel/Render/Supabase removed)
+- Deleted the cloud stack: `packages/dashboard` (Next.js/Vercel app), `render.yaml`,
+  `tools/worker.py` + `tools/worker_tg.py` + `tools/Dockerfile` + `tools/entrypoint.sh`
+  (Render webhook/poll worker), `supabase/schema.sql`, `tools/supabase_client.py`.
+- `tools/vault.py`: Supabase branches and the AES-256-GCM row format (dashboard-era,
+  TS-written) removed — local Fernet-only vault.db with OI_VAULT_KEY in .env.
+- `tools/ledger_poll.py`: Supabase REST backend removed; polls local tasks.db only
+  (drivers untouched — same function signatures).
+- Telegram stays long polling (`gateway.js`, grammY getUpdates) — no webhooks/tunnels;
+  its vault links now point at the local UI (`http://127.0.0.1:8081/vault/fill`).
+- `tools/vault_server.py` is now the local dashboard: `/` status + vault domains,
+  `/setup` key entry page (writes .env via dotenv set_key — zero file editing).
+- CLI: `openinstinct start` boots the dashboard + gateway; root `package.json` gained
+  `bin` so `npm i -g .` puts `openinstinct` on PATH (`dist/openinstinct.js`).
+- Checks: vault self-check, ledger.js self-check, vault_server round-trip, ledger_poll
+  smoke (code + approval), CLI build, /setup POST writes .env — all green.

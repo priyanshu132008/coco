@@ -20,8 +20,8 @@ const DENY_RE = /^(no|deny|denied)\b/i; // "cancel"/"stop" moved to STOP_RE — 
 const STOP_RE = /^\/?(stop|stoppp|cancel)[\s!.]*$/i;
 const CODE_RE = /^\s*(?:otp\s*)?(\d{6})\s*$/i; // "123456" or "otp 123456"
 const RETRY_RE = /^\/?(retry|again|resume)\b/i; // after a Cloudflare pause
-//: Where the Mini App vault lives — the dashboard serves /vault.
-const VAULT_URL = process.env.OI_VAULT_URL || "http://localhost:3000/vault";
+//: The local vault UI (tools/vault_server.py, spawned below) serves the credential form.
+const VAULT_URL = process.env.OI_VAULT_URL || "http://127.0.0.1:8081/vault/fill";
 //: How long to wait for a SIGINT'ed runner to release the browser profile lock.
 const SHUTDOWN_TIMEOUT = Number(process.env.OI_SHUTDOWN_TIMEOUT || 15000);
 

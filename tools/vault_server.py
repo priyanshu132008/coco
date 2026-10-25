@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Vault Web UI — mobile form to fill a domain's credentials/cards/UPI into the encrypted vault.
+"""Vault Web UI + local dashboard — the localhost front-end for a single-machine install.
 
-Served on :8081. Spawned at boot by telegram_gateway/gateway.js; the /vault/fill links the
-gateway sends when it detects vault_required point here. Optional OI_VAULT_TOKEN guards access.
+Served on 127.0.0.1:8081. Spawned at boot by telegram_gateway/gateway.js (and
+`openinstinct start`). Pages: `/` status dashboard, `/setup` key entry (writes .env,
+no file editing needed), `/vault/fill` per-domain credential form. Optional
+OI_VAULT_TOKEN guards the forms.
 
     ./.venv-bu/bin/python tools/vault_server.py
 """
@@ -17,13 +19,14 @@ from pathlib import Path
 from flask import Flask, request
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 load_dotenv()
-from tools.vault import KINDS, add_creds, add_seed, get_creds, _put  # noqa: E402
+from tools.vault import KINDS, add_creds, add_seed, get_creds, list_domains, _put, _ROOT  # noqa: E402
 
 app = Flask(__name__)
-TOKEN = os.environ.get("OI_VAULT_TOKEN")  # when set, /vault/fill must carry matching ?token=
+TOKEN = os.environ.get("OI_VAULT_TOKEN")  # when set, the forms must carry matching ?token=
+ENV_PATH = os.environ.get("OI_ENV_PATH") or str(_ROOT / ".env")
 
 PAGE = """<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenInstinct Vault</title><style>
@@ -66,6 +69,73 @@ code{{background:#1a2133;padding:2px 8px;border-radius:6px}}</style></head><body
 
 def _authorized() -> bool:
     return not TOKEN or request.args.get("token", request.form.get("token", "")) == TOKEN
+
+
+#: Keys the setup page manages. OI_VAULT_KEY is deliberately absent — vault.py generates it.
+SETUP_KEYS = (
+    ("TELEGRAM_BOT_TOKEN", "Telegram bot token (required — from @BotFather on Telegram)"),
+    ("OPENAI_API_KEY", "OpenAI API key (optional — model provider for config.json)"),
+    ("ANTHROPIC_API_KEY", "Anthropic API key (optional — model provider)"),
+    ("OPENROUTER_API_KEY", "OpenRouter API key (optional — model provider)"),
+    ("OI_PRIVACY_API_KEY", "Privacy.com API key (optional — virtual card checkout)"),
+)
+
+
+def _fmt(html_text: str) -> str:
+    return f"<!doctype html><html><head><meta name='viewport' content='width=device-width, initial-scale=1'>\
+<title>OpenInstinct</title><style>{_STYLE}</style></head><body>{html_text}</body></html>"
+
+
+_STYLE = """body{font-family:-apple-system,system-ui,sans-serif;background:#111726;color:#e8ecf4;margin:0}
+.card{max-width:420px;margin:24px auto;padding:20px;background:#1a2133;border-radius:14px}
+h1{font-size:1.2rem;margin:0 0 4px} p.s{color:#8b93a7;font-size:.85rem;margin:0 0 14px}
+label{display:block;font-size:.8rem;color:#8b93a7;margin:10px 0 3px}
+input,select{width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #2c3650;background:#111726;color:#e8ecf4;font-size:1rem}
+button{width:100%;margin-top:16px;padding:12px;border-radius:8px;border:0;background:#4f7cff;color:#fff;font-size:1rem;font-weight:600}
+.ok{color:#6fd598} .miss{color:#e08181} li{margin:6px 0;font-size:.9rem} a{color:#4f7cff} code{background:#111726;padding:2px 8px;border-radius:6px}"""
+
+
+@app.route("/")
+def dashboard():
+    missing = [k for k, _ in SETUP_KEYS if k == "TELEGRAM_BOT_TOKEN" and not os.environ.get(k)]
+    load_dotenv(ENV_PATH)
+    domains = list_domains()
+    rows = "".join(f"<li><code>{html.escape(d)}</code> — TOTP {html.escape(c)}</li>" for d, c in sorted(domains.items())) or "<li>Vault is empty — save credentials from the gateway's /vault/fill links.</li>"
+    bot_ok = bool(os.environ.get("TELEGRAM_BOT_TOKEN"))
+    setup = f"<p class='miss'>⚙️ {html.escape(missing[0])} missing — <a href='/setup'>enter it at /setup</a> (the bot needs it to come online).</p>" if not bot_ok else "<p class='ok'>✔ Bot token present — gateway polls Telegram.</p>"
+    return _fmt(f"""<div class="card">
+<h1>⚡ OpenInstinct</h1><p class="s">Local dashboard — all state stays on this machine ({html.escape(str(_ROOT))}/vault.db, .env).</p>
+{setup}
+<h1>🔐 Vault domains</h1><ul>{rows}</ul>
+<a href="/vault/fill?domain=">Open the credential form →</a> · <a href="/setup">Key setup →</a>
+</div>""")
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    saved = {}
+    if request.method == "POST":  # persist only the fields actually filled in
+        Path(ENV_PATH).touch(exist_ok=True)  # set_key needs the file to exist
+        for key, _ in SETUP_KEYS:
+            val = (request.form.get(key) or "").strip()
+            if val:
+                set_key(ENV_PATH, key, val)
+                os.environ[key] = val
+                saved[key] = True
+    load_dotenv(ENV_PATH)
+    fields = ""
+    for key, desc in SETUP_KEYS:
+        have = "✔ stored" if os.environ.get(key) else "not set"
+        fields += f"<label for='{key}'>{html.escape(desc)} <small>({have})</small></label><input id='{key}' name='{key}' value=''>"
+    saved_note = f"<p class='ok'>✔ Saved: {', '.join(sorted(saved))}</p>" if saved else ""
+    return _fmt(f"""<div class="card">
+<h1>⚙️ Key setup</h1><p class="s">Written to <code>.env</code> on this machine — never sent anywhere.</p>
+{saved_note}
+<form method="post" action="/setup">{fields}
+<button type="submit">Save keys</button></form>
+<p class="s">Restart the gateway after saving a new bot token.</p>
+<a href="/">← Dashboard</a>
+</div>""")
 
 
 @app.route("/vault/fill")

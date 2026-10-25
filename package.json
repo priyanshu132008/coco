@@ -2,12 +2,14 @@
   "name": "openinstinct",
   "version": "0.1.0",
   "private": true,
+  "bin": {
+    "openinstinct": "dist/openinstinct.js"
+  },
   "workspaces": ["packages/*"],
   "scripts": {
     "build:core": "tsc -p packages/core/tsconfig.json",
     "start:cli": "sh build.sh && node dist/openinstinct.js",
     "live": "sh build.sh && node dist/openinstinct.js run",
-    "dev:dashboard": "npm run dev --workspace @openinstinct/dashboard",
     "agent": "esbuild scripts/run_agent.ts --platform=node --bundle --external:onnxruntime-node --external:playwright-extra --external:playwright --external:puppeteer-extra-plugin-stealth --external:ws --outfile=dist/run_agent.js && node dist/run_agent.js"
   },
   "dependencies": {

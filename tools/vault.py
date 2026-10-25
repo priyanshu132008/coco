@@ -15,7 +15,6 @@ Self-check (throwaway paths, no side effects):
 """
 from __future__ import annotations
 
-import base64
 import os
 import sqlite3
 import sys
@@ -24,15 +23,10 @@ from pathlib import Path
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from dotenv import load_dotenv, set_key
 
-import sys as _sys  # noqa: E402
-
-if str(Path(__file__).resolve().parent.parent) not in _sys.path:
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from tools import supabase_client as sbc  # noqa: E402  (script runs need the repo root on the path)
+if str(Path(__file__).resolve().parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 _ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = os.environ.get("OI_ENV_PATH") or str(_ROOT / ".env")
@@ -68,39 +62,13 @@ def _fernet() -> Fernet:
     return Fernet(_get_key())
 
 
-# ---- two ciphertext formats share one key (OI_VAULT_KEY, base64 of 32 bytes) ---------------
-# local vault.db rows are Fernet; Supabase rows are AES-256-GCM (nonce||ct+tag, base64 —
-# encrypted by the dashboard/Mini App with node:crypto, no crypto SDK on Vercel). Readers
-# accept both, so a local key change never breaks older rows and TS↔Py stays compatible.
-def _aes_key() -> bytes:
-    # OI_VAULT_KEY is a Fernet-format key: url-safe base64 (- / _) — node's base64 decoder
-    # accepts both alphabets, plain b64decode here would silently drop the url-safe chars
-    return base64.b64decode(_get_key(), altchars=b"-_")
-
-
-def _decrypt_aesgcm(blob: str) -> str:
-    raw = base64.b64decode(blob)
-    return AESGCM(_aes_key()).decrypt(raw[:12], raw[12:], None).decode()
-
-
-def _encrypt_aesgcm(value: str) -> str:
-    nonce = os.urandom(12)
-    return base64.b64encode(nonce + AESGCM(_aes_key()).encrypt(nonce, value.encode(), None)).decode()
-
-
 def _decrypt(blob: str) -> Optional[str]:
-    """Decrypt either format; a wrong/changed key reads as a message, never a crash."""
-    for attempt in (_fernet_decrypt, _decrypt_aesgcm):
-        try:
-            return attempt(blob)
-        except Exception:
-            continue
-    print(f"[vault] decryption failed — OI_VAULT_KEY changed since storage", flush=True)
-    return None
-
-
-def _fernet_decrypt(blob: str) -> str:
-    return _fernet().decrypt(blob.encode()).decode()
+    """Decrypt; a wrong/changed key reads as a message, never a crash."""
+    try:
+        return _fernet().decrypt(blob.encode()).decode()
+    except Exception:
+        print("[vault] decryption failed — OI_VAULT_KEY changed since storage", flush=True)
+        return None
 
 
 def _migrate_legacy(conn: sqlite3.Connection) -> None:
@@ -152,18 +120,6 @@ def _conn() -> sqlite3.Connection:
 def _put(domain: str, label: str, kind: str, fields: dict[str, str], is_default: int = 1) -> int:
     """Encrypt and upsert an account row (label = one account within a domain)."""
     values = {FIELD_COLS[k]: v.strip() for k, v in fields.items() if k in FIELD_COLS and v and v.strip()}
-    if sbc.enabled():
-        enc = {col: _encrypt_aesgcm(v) for col, v in values.items()}
-        d = domain.strip().lower()
-        existing = sbc.first("accounts", f"domain=eq.{d}&label=eq.{label}", select="id")
-        if existing:
-            sbc.update("accounts", f"id=eq.{existing['id']}", enc)
-            return int(existing["id"])
-        if is_default:  # demote a previous default when this one claims default
-            sbc.update("accounts", f"domain=eq.{d}&is_default=eq.1", {"is_default": 0})
-        row = sbc.insert("accounts", {"domain": d, "label": label.strip() or "account",
-                                      "kind": kind or "custom", **enc, "is_default": is_default})
-        return int(row["id"]) if row else 0
     enc = {col: _fernet().encrypt(v.encode()).decode() for col, v in values.items()}
     with _conn() as conn:
         row = conn.execute("SELECT id FROM accounts WHERE domain=? AND label=?", (domain, label)).fetchone()
@@ -190,17 +146,13 @@ def add_seed(domain: str, seed: str) -> None:
 
 def get_code(domain: str) -> Optional[str]:
     """Current 6-digit TOTP code for the domain's seeded account; None if absent/undecryptable."""
-    if sbc.enabled():
-        row = sbc.first("accounts", f"domain=eq.{domain.strip().lower()}", select="enc_totp")
-        blob = (row or {}).get("enc_totp")
-    else:
-        with _conn() as conn:
-            row = conn.execute(
-                "SELECT enc_totp FROM accounts WHERE domain = ? AND enc_totp IS NOT NULL "
-                "ORDER BY is_default DESC, id DESC LIMIT 1",
-                (domain.strip().lower(),),
-            ).fetchone()
-            blob = row[0] if row else None
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT enc_totp FROM accounts WHERE domain = ? AND enc_totp IS NOT NULL "
+            "ORDER BY is_default DESC, id DESC LIMIT 1",
+            (domain.strip().lower(),),
+        ).fetchone()
+        blob = row[0] if row else None
     if not blob:
         return None
     import pyotp
@@ -214,23 +166,18 @@ def get_code(domain: str) -> Optional[str]:
 def get_creds(domain: str) -> Optional[dict[str, str]]:
     """Default account's decrypted fields (address/upi included when stored). Plaintext in memory only."""
     cols = "enc_username,enc_password,enc_totp,enc_address,enc_upi,enc_pan,enc_cvv,enc_expiry"
-    d = domain.strip().lower()
-    if sbc.enabled():
-        row = sbc.first("accounts", f"domain=eq.{d}&enc_username=not.is.null", select=cols)
-    else:
-        with _conn() as conn:
-            row = conn.execute(
-                f"SELECT {cols} FROM accounts "
-                "WHERE domain = ? ORDER BY is_default DESC, id DESC LIMIT 1",
-                (d,),
-            ).fetchone() or None
-            row = list(row) if row else None
+    with _conn() as conn:
+        row = conn.execute(
+            f"SELECT {cols} FROM accounts "
+            "WHERE domain = ? ORDER BY is_default DESC, id DESC LIMIT 1",
+            (domain.strip().lower(),),
+        ).fetchone()
+        row = list(row) if row else None
     if not row:
         return None
     names = ("username", "password", "totp", "address", "upi", "pan", "cvv", "expiry")
-    values = (row.get(c) for c in cols.split(",")) if sbc.enabled() else row
     out: dict[str, str] = {}
-    for name, blob in zip(names, values):
+    for name, blob in zip(names, row):
         if blob:
             dec = _decrypt(blob)
             if dec:
@@ -240,22 +187,16 @@ def get_creds(domain: str) -> Optional[dict[str, str]]:
 
 def get_address(domain: str) -> Optional[str]:
     """Delivery address for this domain; else any default account's address (universal fallback)."""
-    d = domain.strip().lower()
-    if sbc.enabled():
-        row = sbc.first("accounts", f"domain=eq.{d}&enc_address=not.is.null", select="enc_address") \
-            or sbc.first("accounts", "enc_address=not.is.null", select="enc_address")
-        blob = (row or {}).get("enc_address")
-    else:
-        with _conn() as conn:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT enc_address FROM accounts WHERE domain = ? AND enc_address IS NOT NULL LIMIT 1",
+            (domain.strip().lower(),),
+        ).fetchone()
+        if not row:
             row = conn.execute(
-                "SELECT enc_address FROM accounts WHERE domain = ? AND enc_address IS NOT NULL LIMIT 1",
-                (d,),
+                "SELECT enc_address FROM accounts WHERE enc_address IS NOT NULL ORDER BY is_default DESC, id DESC LIMIT 1"
             ).fetchone()
-            if not row:
-                row = conn.execute(
-                    "SELECT enc_address FROM accounts WHERE enc_address IS NOT NULL ORDER BY is_default DESC, id DESC LIMIT 1"
-                ).fetchone()
-            blob = row[0] if row else None
+        blob = row[0] if row else None
     if not blob:
         return None
     return _decrypt(blob)
@@ -263,16 +204,13 @@ def get_address(domain: str) -> Optional[str]:
 
 def has_domain(domain: str) -> bool:
     """True when the vault holds anything for this domain (seeds or accounts)."""
-    d = domain.strip().lower()
-    if sbc.enabled():
-        return sbc.first("accounts", f"domain=eq.{d}", select="id") is not None
     with _conn() as conn:
-        if conn.execute("SELECT 1 FROM accounts WHERE domain = ? LIMIT 1", (d,)).fetchone():
+        if conn.execute("SELECT 1 FROM accounts WHERE domain = ? LIMIT 1", (domain.strip().lower(),)).fetchone():
             return True
     return False
 
 
-#: The Mini App writes into vault.db asynchronously (Telegram webhook → dashboard → here).
+#: The vault UI (tools/vault_server.py) writes into vault.db while the agent waits.
 #: How long the driver keeps polling for the human's setup instead of dying.
 VAULT_WAIT_SECONDS = float(os.environ.get("OI_VAULT_WAIT", "300"))
 
@@ -291,21 +229,15 @@ def wait_for_domain(domain: str, timeout: float = VAULT_WAIT_SECONDS, interval: 
 
 
 def remove_seed(domain: str) -> bool:
-    d = domain.strip().lower()
-    if sbc.enabled():
-        return len(sbc.rest("DELETE", "accounts", filters=f"domain=eq.{d}")) > 0
     with _conn() as conn:
-        cur = conn.execute("DELETE FROM accounts WHERE domain = ?", (d,))
+        cur = conn.execute("DELETE FROM accounts WHERE domain = ?", (domain.strip().lower(),))
     return cur.rowcount > 0
 
 
 def list_domains() -> dict[str, str]:
     """Domain → current code (TOTP view for manage_vault; seeds never leave the module)."""
-    if sbc.enabled():
-        domains = [r["domain"] for r in sbc.rows("accounts", "", select="domain", limit=1000)]
-    else:
-        with _conn() as conn:
-            domains = [r[0] for r in conn.execute("SELECT DISTINCT domain FROM accounts").fetchall()]
+    with _conn() as conn:
+        domains = [r[0] for r in conn.execute("SELECT DISTINCT domain FROM accounts").fetchall()]
     return {d: (get_code(d) or "-") for d in list(dict.fromkeys(domains))}
 
 
@@ -353,14 +285,6 @@ if __name__ == "__main__":
     os.environ["OI_VAULT_DB"] = str(Path(os.environ.get("OI_VAULT_DB", "/tmp")) / "vault_selfcheck.db")
     os.environ["OI_ENV_PATH"] = str(Path(os.environ.get("OI_ENV_PATH", "/tmp")) / "vault_selfcheck.env")  # never touch the real .env/vault on self-check
     DB_PATH = os.environ["OI_VAULT_DB"]
-    # the Supabase path is a hosted-only runtime choice — self-check must never touch it
-    _removed = {k: os.environ.pop(k) for k in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY") if k in os.environ}
-    # the dashboard (Node) encrypts Supabase vault rows as AES-256-GCM nonce||ct+tag with the
-    # same OI_VAULT_KEY — this fixed vector proves the TS↔Py contract never drifts
-    os.environ["OI_VAULT_KEY"] = "T2RlbjIzNDU2Nzg5MDEyMzQ1Njc4OTBvbmluc3RpbmM="
-    assert _decrypt_aesgcm("AAECAwQFBgcICQoL9y2HsHJKjOgpHkvjlqHgrYhvIYJkFQA3H54orcfUjQpEYkc=") == "mini-app-aes-vector", "AES-GCM contract drifted"
-    assert _decrypt(_encrypt_aesgcm("roundtrip")) == "roundtrip", "AES roundtrip broke"
-    os.environ.pop("OI_VAULT_KEY", None)
     add_seed("example.com", seed)
     code = get_code("example.com")
     assert code == pyotp.TOTP(seed).now(), f"vault code {code} != direct"
