@@ -451,3 +451,14 @@ Status: **done** — verified end to end.
   never be. Swapped to a plain url inline button — the native browser opens
   http://localhost:3000/vault. Works only on the Mac itself; a public/tunneled HTTPS vault
   URL is the real fix for phone use (ponytail note in code).
+
+## 2026-10-25 — coco stop now beats launchd KeepAlive
+- Root cause: the gateway runs under launchd (com.openinstinct.gateway, KeepAlive) —
+  `pkill -f gateway.js` killed it and launchd respawned it instantly, so `coco stop`
+  looked dead (Ctrl-C only worked because `coco online` runs the gateway in foreground).
+- fix: stopCommand scans ~/Library/LaunchAgents for any unit running
+  telegram_gateway/gateway.js, `launchctl bootout`s it first, then proceeds with the
+  pkill sweep as before (count includes the bootout). Live-verified: bootout + pkill →
+  3s later nothing running, nothing respawned.
+- Note: coco start runs the gateway in the foreground (no launchd) until the next
+  reboot/login reloads the plist — same as before, stop is just effective now.

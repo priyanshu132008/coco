@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { CdpEngineLoop, WebSocketBridge } from '@coco/core'
 import { dirname, join } from 'path'
-import { existsSync, realpathSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs'
+import { homedir } from 'os'
 import { spawn, spawnSync } from 'child_process'
 
 const HELP = `
@@ -163,6 +164,24 @@ function stopCommand(): void {
     console.error('✖ coco stop is not implemented on Windows — kill the node/python processes manually.')
     process.exitCode = 1
     return
+  }
+  // The gateway may run under launchd KeepAlive — pkill alone is whack-a-mole: launchd
+  // respawns it instantly. Boot any LaunchAgents unit that runs gateway.js out first.
+  if (process.platform === 'darwin') {
+    try {
+      const uid = process.getuid?.() ?? 501
+      for (const f of readdirSync(join(homedir(), 'Library/LaunchAgents'))) {
+        if (!f.endsWith('.plist')) continue
+        const body = readFileSync(join(homedir(), 'Library/LaunchAgents', f), 'utf8')
+        if (!body.includes('telegram_gateway/gateway.js')) continue
+        const label = f.replace(/\.plist$/, '')
+        spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { stdio: 'ignore' })
+        console.log(`✔ stopped launchd service ${label} (KeepAlive would respawn it)`)
+        stopped += 1
+      }
+    } catch {
+      // no LaunchAgents dir / unreadable — plain pkill below still applies
+    }
   }
   const targets: [string, string][] = [
     ['gateway', 'telegram_gateway/gateway.js'],
