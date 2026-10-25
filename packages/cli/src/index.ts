@@ -2,16 +2,15 @@
 import { CdpEngineLoop, WebSocketBridge } from '@coco/core'
 import { dirname, join } from 'path'
 import { existsSync, realpathSync } from 'fs'
-import { spawn } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 
 const HELP = `
   ⚡ Coco v0.1.0 — local AI browser agent
   ──────────────────────────────────────────────────────
-  coco start            launch the local stack: the Next.js dashboard on
-                        http://localhost:3000 (setup + vault UI, opened in your
-                        browser) and the Telegram bot (long polling — no public
-                        IP or tunnels needed)
-  coco configure        open the key-setup page (LLM provider key, bot token)
+  coco configure        boot the dashboard (Next.js on http://localhost:3000) and open
+                        http://localhost:3000/setup — enter the bot token + LLM key once
+  coco online           run the Telegram gateway + local task workers only. No windows.
+  coco stop             kill the gateway, task workers and dashboard
   coco health           check .env, vault key, SQLite files and keys; prints fixes
   coco run "<prompt>"    attach to your real Chrome (CDP :9222), run the model loop,
                          stream live frames to ws://localhost:8080
@@ -125,20 +124,24 @@ async function serveOrOpen(path: string): Promise<void> {
   openBrowser(DASHBOARD + path)
 }
 
-/** Run the long-polling gateway. The gateway exits 3 when /api/setup changed the bot token
- *  in .env — respawn it so the new token takes effect without restarting the dashboard.
+/** Run the long-polling gateway + its local python workers. The gateway exits 3 when
+ *  /api/setup changed the bot token in .env — respawn it so the new token takes effect.
  *  An inherited TELEGRAM_BOT_TOKEN would beat dotenv's no-override load, so strip it and
- *  let the gateway read .env fresh every boot. */
+ *  let the gateway read .env fresh every boot. No browser windows — that's `configure`. */
 function spawnGateway(): void {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { TELEGRAM_BOT_TOKEN, ...rest } = process.env
   const gw = spawn('node', [join(ROOT, 'telegram_gateway/gateway.js')], {
-    cwd: ROOT, stdio: 'inherit', env: { ...rest, BROWSER: 'none' }, // the CLI opens the dashboard, never Next
+    cwd: ROOT, stdio: 'inherit', env: { ...rest, BROWSER: 'none' },
   })
-  gw.on('exit', (code) => {
+  gw.on('exit', (code, signal) => {
     if (code === 3) {
       console.log('▸ .env updated — gateway restarted with the new bot token')
       spawnGateway()
+      return
+    }
+    if (signal) {
+      console.log('▸ gateway stopped') // coco stop / external SIGTERM — deliberate, not a failure
       return
     }
     if (code) console.error(`✖ gateway exited (${code}) — check TELEGRAM_BOT_TOKEN in .env`)
@@ -146,11 +149,48 @@ function spawnGateway(): void {
   })
 }
 
-async function startCommand(): Promise<void> {
-  console.log('  ⚡ Coco v0.1.0 — local stack')
-  await serveOrOpen('/')
-  console.log(`▸ dashboard/vault: ${DASHBOARD}/  (setup: ${DASHBOARD}/setup)`)
+/** coco online — the bot only. Long polling + per-task python runner subprocesses. */
+function onlineCommand(): void {
+  console.log('  ⚡ Coco is online and listening…')
+  console.log('  · Telegram: message your bot (Ctrl-C to stop; `coco stop` kills cleanly)')
+  console.log('  · Tasks: the runner runs each goal as an isolated subprocess (5 min hard cap, COCO_TASK_TIMEOUT)') // prettier-ignore
   spawnGateway()
+}
+
+/** coco stop — kill every stack process: gateway, python runners, Next dashboard. */
+function stopCommand(): void {
+  if (process.platform === 'win32') {
+    console.error('✖ coco stop is not implemented on Windows — kill the node/python processes manually.')
+    process.exitCode = 1
+    return
+  }
+  const targets: [string, string][] = [
+    ['gateway', 'telegram_gateway/gateway.js'],
+    ['browser driver (worker)', 'tools/browser_driver.py'],
+    ['agent runner (worker)', 'tools/agent_runner.py'],
+    ['dashboard (next :3000)', 'dist/bin/next dev -p 3000'],
+  ]
+  let stopped = 0
+  for (const [label, pattern] of targets) {
+    if (spawnSync('pkill', ['-f', pattern], { stdio: 'ignore' }).status === 0) {
+      console.log(`✔ stopped ${label}`)
+      stopped += 1
+    }
+  }
+  // sweep: pattern kills can miss, but nothing legit should still hold :3000
+  const pids = spawnSync('bash', ['-c', 'lsof -tiTCP:3000 -sTCP:LISTEN || true'], { stdio: 'pipe' })
+    .stdout.toString()
+    .trim()
+  for (const pid of pids.split('\n').filter(Boolean)) {
+    try {
+      process.kill(Number(pid), 'SIGTERM')
+      console.log(`✔ stopped dashboard pid ${pid} (:3000 listener)`)
+      stopped += 1
+    } catch {
+      // pid vanished between lsof and kill — nothing to stop
+    }
+  }
+  console.log(stopped ? `Coco stack stopped (${stopped} processes).` : 'Coco is not running.')
 }
 
 async function runCommand(prompt: string): Promise<void> {
@@ -169,11 +209,13 @@ async function runCommand(prompt: string): Promise<void> {
   }
 }
 
-if (cmd === 'start') {
-  void startCommand()
-} else if (cmd === 'configure') {
-  console.log('▸ opening the key setup page…')
+if (cmd === 'configure') {
+  console.log('▸ booting the dashboard and opening the key setup page…')
   void serveOrOpen('/setup')
+} else if (cmd === 'online') {
+  onlineCommand()
+} else if (cmd === 'stop') {
+  stopCommand()
 } else if (cmd === 'health') {
   const pyBin = PY.startsWith('/') ? PY : join(ROOT, PY)
   const h = spawn(pyBin, [join(ROOT, 'tools/health.py')], { cwd: ROOT, stdio: 'inherit' })

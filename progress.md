@@ -366,3 +366,19 @@ Status: **done** — verified end to end.
 - Fixed com.coco.gateway.plist still pointing at the old openinstinct/ paths.
 - Verified live: coco start → "webhook cleared" + polling; sed-swapping the token in .env
   → ".env changed — restarting" → CLI respawn → polling again; .env restored byte-identical.
+
+## 2026-10-25 — CLI refactor (configure/online/stop) + task-execution hard cap
+- Removed `coco start`. `coco configure` = dashboard boot + open /setup; `coco online` =
+  gateway + python runners only, prints "Coco is online and listening…"; `coco stop` =
+  pkill -f on gateway / tools/browser_driver.py / tools/agent_runner.py / next :3000, plus
+  an lsof sweep of :3000 listeners. bin entry unchanged (commands are argv, not bins).
+- Task isolation: runners were already detached + unref'd per task (queue never blocks on
+  the agent); the real stall was a hung runner with NO cap. gateway.js now arms a hard
+  COCO_TASK_TIMEOUT (default 300s) per task: SIGINT → SHUTDOWN_TIMEOUT grace → SIGKILL,
+  tasks.db status 'failed', chat notified, per-chat pending (approval/code/location/captcha)
+  gate maps cleared so the dead task can't swallow replies. close handler clears the timer.
+- Verified live against real traffic: while the gateway ran, the hung #30 ("start"-era
+  stuck task) was stopped and superseded by the next message, #33 ran end-to-end (exit 0,
+  'done'); coco stop killed the running gateway cleanly. Timeout-kill observation window
+  (waiting >5 min on a deliberately hung task) not exercised live — COCO_TASK_TIMEOUT env
+  override is the knob for a quick manual check.

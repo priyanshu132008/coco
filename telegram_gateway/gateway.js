@@ -253,6 +253,32 @@ function spawnRunner(taskId, goal, chatId) {
   let buf = "";
   let lastError = null; // the runner's structured 'error' event, if it sent one
   let errorNotified = false; // …and whether we already told the chat about it
+  // Overarching cap: a hung LLM loop or a frozen browser (bad goal, model loop) must never
+  // own the runner forever — SIGINT, grace, SIGKILL, ledger 'failed', chat notified.
+  // ponytail: one hard cap for the whole task; per-step budgets live inside the runner.
+  const TASK_TIMEOUT = Number(process.env.COCO_TASK_TIMEOUT || 300) * 1000;
+  const killer = setTimeout(() => {
+    if (child.exitCode !== null) return;
+    errorNotified = true; // the timeout message below IS the failure notice
+    console.error(`[gateway] task ${taskId} exceeded ${TASK_TIMEOUT / 1000}s — killing the runner`);
+    ledger.setStatus(db, taskId, "failed");
+    bot.api
+      .sendMessage(chatId, `⏱️ Task #${taskId} hit the ${TASK_TIMEOUT / 60000} min cap with the browser stuck — stopped it and marked the task failed.`)
+      .catch((e) => console.error("[gateway] timeout notify failed:", e.message));
+    try {
+      process.kill(child.pid, "SIGINT");
+    } catch {}
+    setTimeout(() => {
+      try {
+        process.kill(child.pid, "SIGKILL"); // runner still alive after grace → force
+      } catch {}
+    }, SHUTDOWN_TIMEOUT);
+    // a dead task must not keep swallowing the chat's next replies as gate decisions
+    pending.delete(chatId);
+    pendingCodes.delete(chatId);
+    pendingLocations.delete(chatId);
+    captchaBlocked.delete(chatId);
+  }, TASK_TIMEOUT);
   child.stdout.on("data", (d) => {
     buf += d.toString();
     const lines = buf.split("\n");
@@ -337,6 +363,7 @@ function spawnRunner(taskId, goal, chatId) {
     stderrTail = (stderrTail + text).slice(-2000);
   });
   child.on("close", (code) => {
+    clearTimeout(killer);
     const current = ledger.getStatus(db, taskId);
     // 'cancelled' was written by /stop or by the single-active-task handoff — don't stomp it
     if (!current || current.status === "running" || current.status === "booting") {
