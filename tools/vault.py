@@ -282,7 +282,20 @@ if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "put":
     print(f"[vault] stored {', '.join(sorted(fields))} for {domain.lower()}", flush=True)
     sys.exit(0)
 
-if __name__ == "__main__":
+if __name__ == "__main__" and len(sys.argv) > 1 and sys.argv[1] == "list":
+    # Bridge for the dashboard's vault manager: one JSON line of decrypted default-account
+    # fields per domain (TOTP seeds stay out — a seed is a generator for live codes).
+    import json
+
+    out = []
+    for d in sorted(list_domains().keys()):
+        creds = get_creds(d) or {}
+        creds.pop("totp", None)
+        out.append({"domain": d, **creds})
+    print(json.dumps(out))
+    sys.exit(0)
+
+elif __name__ == "__main__":
     seed = "JBSWY3DPEHPK3PXP"
     import pyotp
 

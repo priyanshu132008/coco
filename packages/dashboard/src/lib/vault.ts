@@ -125,8 +125,19 @@ export async function relayLocation(taskId: number, address: string): Promise<vo
 
 /** Mini App vault write — local-first: JSON → tools/vault.py `put` → Fernet → vault.db. */
 export function saveToVault(domain: string, fields: Record<string, string>): Promise<void> {
+  return vaultHelper('put', JSON.stringify({ domain, fields })).then(() => undefined)
+}
+
+/** Mini App vault read — tools/vault.py `list` → decrypted default-account fields per
+ *  domain (TOTP seeds never leave the module). Same Fernet key path as the writes. */
+export function listVault(): Promise<Array<Record<string, string>>> {
+  return vaultHelper('list').then((out) => JSON.parse(out) as Array<Record<string, string>>)
+}
+
+/** One vault.py round-trip: stdin payload in, JSON lines/stdout out. */
+function vaultHelper(mode: 'put' | 'list', stdin?: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(vaultPython(), [path.join(codeRoot(), 'tools', 'vault.py'), 'put'], {
+    const child = spawn(vaultPython(), [path.join(codeRoot(), 'tools', 'vault.py'), mode], {
       // vault.py knows COCO_VAULT_DB / COCO_ENV_PATH, not COCO_ROOT — translate
       cwd: codeRoot(),
       env: {
@@ -136,16 +147,21 @@ export function saveToVault(domain: string, fields: Record<string, string>): Pro
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     })
+    let out = ''
     let err = ''
+    child.stdout.on('data', (d) => {
+      out += d.toString()
+    })
     child.stderr.on('data', (d) => {
       err += d.toString()
     })
     child.on('error', reject)
     child.on('close', (code) => {
-      if (code === 0) resolve()
+      if (code === 0) resolve(out)
       else reject(new Error(err.trim() || `vault helper exited ${code}`))
     })
-    child.stdin.end(JSON.stringify({ domain, fields }))
+    if (stdin !== undefined) child.stdin.end(stdin)
+    else child.stdin.end()
   })
 }
 

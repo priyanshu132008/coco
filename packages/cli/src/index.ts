@@ -180,19 +180,32 @@ function bootoutGatewayLaunchd(): number {
 /** coco online — the bot only. Long polling + per-task python runner subprocesses. */
 function onlineCommand(): void {
   console.log('  ⚡ Coco is online and listening…')
-  console.log('  · Telegram: message your bot (Ctrl-C to stop; `coco stop` kills cleanly)')
+  console.log('  · Telegram: message your bot (Ctrl-C or type `coco stop` here to stop cleanly)')
   console.log('  · Tasks: the runner runs each goal as an isolated subprocess (5 min hard cap, COCO_TASK_TIMEOUT)') // prettier-ignore
   bootoutGatewayLaunchd() // no launchd twin fighting over getUpdates → 409s
   spawnGateway()
+  watchStdinForStop() // typing `coco stop` in THIS terminal stops the stack
 }
 
-/** coco stop — kill every stack process: gateway, python runners, Next dashboard. */
-function stopCommand(): void {
-  if (process.platform === 'win32') {
-    console.error('✖ coco stop is not implemented on Windows — kill the node/python processes manually.')
-    process.exitCode = 1
-    return
-  }
+/** Watch the terminal stdin while `coco online` runs in the foreground. Typing
+ *  `coco stop` / `stop` THERE (not a second terminal) must stop the stack — the line used
+ *  to fall through to the gateway child's unread stdin and vanish. Ctrl-C still works. */
+function watchStdinForStop(): void {
+  if (!process.stdin.isTTY) return
+  process.stdin.setEncoding('utf8')
+  process.stdin.resume()
+  process.stdin.on('data', (chunk) => {
+    const line = String(chunk).trim().toLowerCase().replace(/^coco\s+/, '')
+    if (!/^(stop|quit|exit|q)\b/.test(line)) return
+    console.log('▸ stopping the coco stack…')
+    stopStackProcesses()
+    process.exit(0)
+  })
+}
+
+/** The pkill sweep: gateway, python runners, the Next dashboard on :3000.
+ *  (launchd bootout happens here so KeepAlive can't resurrect anything.) */
+function stopStackProcesses(): number {
   // The gateway may run under launchd KeepAlive — pkill alone is whack-a-mole: launchd
   // respawns it instantly. Boot the unit out (and disable it) before the pkill sweep.
   const booted = bootoutGatewayLaunchd()
@@ -223,7 +236,19 @@ function stopCommand(): void {
       // pid vanished between lsof and kill — nothing to stop
     }
   }
-  console.log(stopped ? `Coco stack stopped (${stopped} processes).` : 'Coco is not running.')
+  if (stopped) console.log(`Coco stack stopped (${stopped} processes).`)
+  else console.log('Coco is not running.')
+  return stopped
+}
+
+/** coco stop — the standalone CLI command: same sweep, from any terminal. */
+function stopCommand(): void {
+  if (process.platform === 'win32') {
+    console.error('✖ coco stop is not implemented on Windows — kill the node/python processes manually.')
+    process.exitCode = 1
+    return
+  }
+  stopStackProcesses()
 }
 
 async function runCommand(prompt: string): Promise<void> {

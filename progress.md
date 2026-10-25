@@ -482,3 +482,19 @@ Status: **done** — verified end to end.
 - --check extends chat_safe_text (repr → readable fallback, plain strings pass through).
 - launchd gateway left bootout+disabled on this Mac — the bot is OFF until the user runs
   `coco online`.
+
+## 2026-10-25 — Vault manager UI + GET route + in-terminal coco stop
+- vault.ts: listVault() → `tools/vault.py list` (new CLI bridge: decrypted default-account
+  fields per domain, TOTP seeds filtered out); saveToVault refactored onto the same
+  vaultHelper round-trip. GET /api/vault returns entries (key stays in the server process,
+  only per-entry plaintext reaches the page render; passwords/cvv/pan masked client-side
+  with a reveal toggle). vault.py self-check made an elif chain so list/put exit first.
+- /vault: without ?domain it's now a manager — tabs Logins / Payments / Addresses listing
+  decrypted entries, "update" fills the site field, add/update forms POST the existing
+  /api/vault/submit (gate=credentials/card/location). With ?domain (bot button) the
+  original gate form is unchanged. Verified live: GET decrypts real vault.db rows, page 200.
+- coco stop from the same terminal: `coco online` now watches stdin — typing
+  `coco stop`/`stop`/`quit` stops the stack (that's what the screenshot was: the line
+  went to the foreground gateway's unread stdin). Real-pty test: stops cleanly, exits,
+  nothing respawns.
+- NOTE: the launchd gateway is bootout+disabled — coco online is now the only runner.
