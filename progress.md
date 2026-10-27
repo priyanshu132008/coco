@@ -506,3 +506,22 @@ Status: **done** — verified end to end.
   builds (main + OTP/address/payment resumes) now pass llm_timeout=180 via the shared
   `common` dict, overridable with COCO_LLM_TIMEOUT. LiteLLM's own request timeout is
   already 600s (default) — no client change needed. --check green.
+
+## 2026-10-27 — ActionResult.error crash + fuzzy vault domain matching (domain_hint)
+- chat_safe_text crashed the gateway: browser-use 0.13.11 renamed ActionResult.failure_reason
+  to error, and the pydantic __getattr__ raise killed the whole driver (task 44 exit 1).
+  Fixed with getattr(act, 'error', None) fallbacks and a try/except around the history walk —
+  no result-shape drift can crash the gateway again. --check gains an assert for both.
+- request_user_credentials now takes domain_hint: str (optional in schema, mandated by
+  LOGIN_RULE: "MUST provide domain_hint (e.g. 'gmail', 'amazon', 'blinkit')"). Lookup key
+  priority: LLM hint → live page host (target_domain of browser_session.get_current_page_url())
+  → goal's domain. Fixes: vault entry stored as 'gmail' was never found on
+  accounts.google.com (exact-match WHERE domain = ?).
+- vault.py: shared _fuzzy_where() — rows match the hint in both directions (hint 'gmail' ↔
+  stored 'gmail', host 'mail.google.com' ↔ stored 'google.com'), escaping %/_ in the hint;
+  empty hint never matches. get_creds/has_domain (and thus wait_for_domain) use it, with
+  exact matches ranked first (ORDER BY (domain = ?) DESC). Self-check covers hint, apex-host,
+  unrelated-domain, exact-priority and empty-hint cases. Registered-signature smoke test
+  against browser-use 0.13.11 registry: domain_hint in schema, executes fine.
+- Note: page host 'accounts.google.com' still cannot match a row literally named 'gmail'
+  (no substring relation) — that gap is exactly why LOGIN_RULE forces the LLM to pass the hint.
