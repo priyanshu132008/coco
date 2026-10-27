@@ -167,14 +167,32 @@ def get_code(domain: str) -> Optional[str]:
     return pyotp.TOTP(seed).now()
 
 
+def _fuzzy_where(pattern: str) -> tuple[str, list]:
+    """Fuzzy domain clause: hint and stored domain match in either direction — a 'gmail'
+    hint finds a row stored as 'gmail', a page host 'accounts.google.com' finds 'google.com'.
+    # ponytail: a row stored with % or _ in its domain over-matches in the reverse
+    direction; escape it with REPLACE() if that ever bites."""
+    d = pattern.strip().lower()
+    if not d:
+        return "0", []  # an empty hint must never match everything
+    escaped = d.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return (
+        r"(domain LIKE ? ESCAPE '\' OR ? LIKE '%' || domain || '%')",
+        [f"%{escaped}%", d],
+    )
+
+
 def get_creds(domain: str) -> Optional[dict[str, str]]:
     """Default account's decrypted fields (address/upi included when stored). Plaintext in memory only."""
     cols = "enc_username,enc_password,enc_totp,enc_address,enc_upi,enc_pan,enc_cvv,enc_expiry"
+    d = domain.strip().lower()
+    like_q, like_args = _fuzzy_where(d)
     with _conn() as conn:
         row = conn.execute(
             f"SELECT {cols} FROM accounts "
-            "WHERE domain = ? ORDER BY is_default DESC, id DESC LIMIT 1",
-            (domain.strip().lower(),),
+            f"WHERE domain = ? OR {like_q} "
+            "ORDER BY (domain = ?) DESC, is_default DESC, id DESC LIMIT 1",
+            (d, *like_args, d),
         ).fetchone()
         row = list(row) if row else None
     if not row:
@@ -207,9 +225,11 @@ def get_address(domain: str) -> Optional[str]:
 
 
 def has_domain(domain: str) -> bool:
-    """True when the vault holds anything for this domain (seeds or accounts)."""
+    """True when the vault holds anything for this domain (seeds or accounts, fuzzy)."""
+    d = domain.strip().lower()
+    like_q, like_args = _fuzzy_where(d)
     with _conn() as conn:
-        if conn.execute("SELECT 1 FROM accounts WHERE domain = ? LIMIT 1", (domain.strip().lower(),)).fetchone():
+        if conn.execute(f"SELECT 1 FROM accounts WHERE domain = ? OR {like_q} LIMIT 1", (d, *like_args)).fetchone():
             return True
     return False
 
@@ -328,5 +348,13 @@ elif __name__ == "__main__":
     assert raw and "4111111111111111" not in "".join(str(v) for v in raw), "card number leaked at rest"
     card = get_creds("pay.example.com")
     assert card["pan"] == "4111111111111111" and card["cvv"] == "123" and card["expiry"] == "09/27", card
+    # fuzzy domain matching: a short-name hint and a page host both find the row
+    add_creds("gmail", {"username": "me@gmail.com", "password": "pw"})
+    assert has_domain("gmail") and get_creds("gmail")["username"] == "me@gmail.com"
+    add_creds("google.com", {"username": "apex@x.io", "password": "pw2"})
+    assert has_domain("mail.google.com") and get_creds("mail.google.com")["username"] == "apex@x.io", "page host must fuzzy-match a stored apex domain"
+    assert not has_domain("totally-unrelated.io"), "an unrelated domain must not fuzzy-match"
+    assert get_creds("shop.example.com")["username"] == "second@x.io", "fuzzy must not steal an exact match"
+    assert not has_domain("") and not get_creds("")
     Path(_db()).unlink(missing_ok=True)
     print("[vault] self-check ok — keygen, TOTP, multi-account, at-rest crypto, address fallback, cards, remove", flush=True)

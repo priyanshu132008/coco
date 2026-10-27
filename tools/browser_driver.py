@@ -132,8 +132,10 @@ SCROLL_RULE = (
 #: never give up on login while the vault may hold the account.
 LOGIN_RULE = (
     "LOGIN RULE: If you encounter a login wall, you MUST use the request_user_credentials "
-    "tool to fetch the login details from the vault. Never give up on a login page without "
-    "trying to fetch credentials. Enter the returned username/email and password exactly "
+    "tool to fetch the login details from the vault. When using request_user_credentials, "
+    "you MUST provide a domain_hint argument (e.g., 'gmail', 'amazon', 'blinkit') based on "
+    "the site you are logging into. Never give up on a login page without trying to fetch "
+    "credentials. Enter the returned username/email and password exactly "
     "into their fields, never print them in a chat message, and never type them anywhere "
     "you are not sure is the site's own login form."
 )
@@ -240,17 +242,22 @@ def card_for_payment(goal: str, domain: Optional[str], price: str):
 def chat_safe_text(value, history=None) -> str:
     """Chat-safe rendering of a browser-use result: a plain string stays, an object repr
     ('AgentHistoryList object at 0x…') never reaches Telegram — it degrades to the last
-    action's failure_reason/extracted_content, or a neutral fallback."""
+    action's error/extracted_content, or a neutral fallback. browser-use 0.13 renamed
+    ActionResult.failure_reason to error — getattr with defaults keeps either shape alive,
+    and the try keeps any future history-shape drift from crashing the gateway."""
     out = value if isinstance(value, str) else ("" if value is None else str(value))
     if "object at 0x" in out or "AgentHistoryList" in out:
         fb = ""
-        for h in reversed(getattr(history, "history", []) or []):
-            for act in reversed(h.result):
-                fb = act.failure_reason or act.extracted_content or ""
+        try:
+            for h in reversed(getattr(history, "history", []) or []):
+                for act in reversed(getattr(h, "result", []) or []):
+                    fb = getattr(act, "error", None) or getattr(act, "extracted_content", None) or ""
+                    if fb and "object at 0x" not in fb:
+                        break
                 if fb and "object at 0x" not in fb:
                     break
-            if fb and "object at 0x" not in fb:
-                break
+        except Exception:
+            fb = ""  # a malformed history must degrade to the fallback, never crash
         out = fb or f"agent finished without a readable result ({getattr(history, 'number_of_steps', '?')} steps)"
     return out.strip()[:1000]
 
@@ -612,24 +619,35 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
     # swap mid-run isn't supported by this browser-use build — switch to that when it is.
     @controller.action(
         "Call this tool immediately if you reach a login/sign-in wall (username, email or "
-        "password fields, SSO) and need the account's login details. The vault stores them."
+        "password fields, SSO) and need the account's login details. The vault stores them. "
+        "You MUST pass a domain_hint argument: the site's short name (e.g. 'gmail', 'amazon', "
+        "'blinkit') based on the site you are logging into."
     )
-    async def request_user_credentials() -> str:
-        if not domain:
+    async def request_user_credentials(domain_hint: str = "", browser_session=None) -> str:
+        # lookup key priority: the LLM's hint (site short name), the live page host, the goal's domain
+        key = (domain_hint or "").strip().lower()
+        if not key and browser_session is not None:
+            try:
+                key = target_domain(await browser_session.get_current_page_url() or "") or ""
+            except Exception:
+                key = ""
+        if not key:
+            key = (domain or "").strip().lower()
+        if not key:
             return "No target site in this goal — there is no vault account to fetch. Skip login and continue without it."
-        if not has_domain(domain):
-            print(json.dumps({"event": "vault_required", "domain": domain, "type": "credentials"}), flush=True)
-        await asyncio.to_thread(wait_for_domain, domain)  # polls vault.db; instant when already stored
+        if not has_domain(key):
+            print(json.dumps({"event": "vault_required", "domain": key, "type": "credentials"}), flush=True)
+        await asyncio.to_thread(wait_for_domain, key)  # polls vault.db; instant when already stored
         from tools.vault import get_creds
 
-        creds = await asyncio.to_thread(get_creds, domain) or {}
+        creds = await asyncio.to_thread(get_creds, key) or {}
         if not (creds.get("username") and creds.get("password")):
             return (
-                f"No credentials for {domain} arrived in time — skip login and continue the task "
+                f"No credentials for {key} arrived in time — skip login and continue the task "
                 "without the account; say so plainly in your final message."
             )
         return (
-            f"Vault credentials for {domain} retrieved. Type the username/email exactly this into "
+            f"Vault credentials for {key} retrieved. Type the username/email exactly this into "
             f"the identifier field: {creds['username']} — and this into the password field: "
             f"{creds['password']}. Then submit. NEVER repeat these values in a chat message or "
             "type them outside this login form."
@@ -886,6 +904,19 @@ if __name__ == "__main__":
         assert target_domain("open blinkit and shop") is None
         assert target_domain("Open file:///tmp/oi_fake_cart.html and review") is None, target_domain("Open file:///tmp/oi_fake_cart.html")
         assert LOGIN_INTENT_RE.search("buy a cricket bat") and not LOGIN_INTENT_RE.search("find me a recipe")
+        # browser-use 0.13 ActionResult has `error`, not failure_reason — chat_safe_text must
+        # survive both shapes (getattr) and a malformed history (try/except), never raise
+        class _Act:
+            error = "Sign-in failed"
+            extracted_content = None
+        class _H:
+            result = [_Act()]
+        class _Hist:
+            history = [_H()]
+            number_of_steps = 2
+        assert chat_safe_text("AgentHistoryList object at 0x1", _Hist()) == "Sign-in failed"
+        _H.result = None  # malformed history degrades to the neutral fallback
+        assert "steps" in chat_safe_text("AgentHistoryList object at 0x1", _Hist())
         # master proxy: off when MASTER_PROXY_SERVER is absent, full dict when present
         _proxy_env = {k: os.environ.pop(k) for k in ("MASTER_PROXY_SERVER", "MASTER_PROXY_USERNAME", "MASTER_PROXY_PASSWORD") if k in os.environ}
         try:
