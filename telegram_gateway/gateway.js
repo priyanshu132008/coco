@@ -357,7 +357,7 @@ function spawnRunner(taskId, goal, chatId) {
   // Overarching cap: a hung LLM loop or a frozen browser (bad goal, model loop) must never
   // own the runner forever — SIGINT, grace, SIGKILL, ledger 'failed', chat notified.
   // ponytail: one hard cap for the whole task; per-step budgets live inside the runner.
-  const TASK_TIMEOUT = Number(process.env.COCO_TASK_TIMEOUT || 300) * 1000;
+  const TASK_TIMEOUT = Number(process.env.COCO_TASK_TIMEOUT || 600) * 1000;
   const killer = setTimeout(() => {
     if (child.exitCode !== null) return;
     errorNotified = true; // the timeout message below IS the failure notice

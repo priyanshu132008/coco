@@ -139,6 +139,15 @@ LOGIN_RULE = (
     "into their fields, never print them in a chat message, and never type them anywhere "
     "you are not sure is the site's own login form."
 )
+#: Pinned to the main task prompt: bulk reads must not crawl the page item by item —
+#: a 68-email inbox burned the whole step budget scrolling and reading one mail at a time.
+DATA_EXTRACTION_RULE = (
+    "DATA EXTRACTION RULE: When asked to summarize or list large amounts of data (like an "
+    "entire email inbox or product catalog), DO NOT scroll endlessly and read items one by "
+    "one. You MUST use the `evaluate` or `extract` actions to run a script that pulls the "
+    "required data from the DOM in bulk, and return a concise summary."
+)
+
 #: Pinned to every task prompt (main + gate-round resume agents) so the LLM reaches for the
 #: custom vault tool instead of guessing into modals it has no data for.
 CUSTOM_TOOL_RULE = (
@@ -662,8 +671,10 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
         use_vision=True,
         enable_signal_handler=False,  # we own SIGINT — browser-use's handler only pauses
         # browser-use's per-model default is 75s (agent.service._get_model_timeout) — a slow
-        # free endpoint (Nemotron on NVIDIA) dies mid-task to "LLM call timed out". 3 min.
+        # slow free endpoint (Nemotron on NVIDIA) dies mid-task to "LLM call timed out". 3 min.
         llm_timeout=int(os.environ.get("COCO_LLM_TIMEOUT", "180")),
+        # bulk-extraction tasks (an email inbox, a catalog) need room to batch-read the DOM
+        max_actions_per_step=10,
     )
     _saved_addr = get_address(domain) if domain else None
     addr_line = f"\nSaved delivery address in the vault for {domain}: {_saved_addr} — use it for any address screen." if _saved_addr else ""
@@ -672,7 +683,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             f"{goal}{addr_line}\n\n"
             f"{LOCATION_RULES}\n\n"
             "RULES: "
-            f"{SCROLL_RULE} {LOGIN_RULE} "
+            f"{SCROLL_RULE} {LOGIN_RULE} {DATA_EXTRACTION_RULE} "
             "If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
             "message must be exactly 'OTP_REQUIRED' (plus the site name) — NEVER guess, wait out, "
             "or bypass codes. If the site is missing an OTP field entirely, do NOT mention OTP at "
@@ -706,7 +717,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             emit({"type": "error", "message": f"browser launch failed: {e}"})
             return 1
         history = await agent.run(
-            max_steps=max_steps or int(os.environ.get("COCO_BU_MAX_STEPS", "25")),
+            max_steps=max_steps or int(os.environ.get("COCO_BU_MAX_STEPS", "50")),
             on_step_start=on_step_start,  # clear Cloudflare before the model sees the page
         )
         result = history.final_result() or ""
