@@ -52,6 +52,7 @@ from tools.ledger_poll import (  # noqa: E402
     CODE_TIMEOUT,
     RETRY_TIMEOUT,
 )
+from tools.agent_reach_tool import query_agent_reach  # noqa: E402
 from tools.vault import get_address, get_creds, has_domain, wait_for_domain  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -163,6 +164,17 @@ GMAIL_EXTRACTION_RULE = (
     "Summarize the most recent 20-25 emails visible in the current inbox view — do NOT "
     "paginate through 70+ older emails across multiple pages unless the user explicitly "
     "asked for them."
+)
+
+#: Pinned to the main task prompt: read-only platform work goes through the Agent Reach
+#: CLI subprocess first — booting the visual browser for a transcript fetch is minutes
+#: and steps wasted when one CLI call returns structured JSON.
+FAST_PATH_RULE = (
+    "FAST-PATH EXTRACTION RULE: For reading, searching, or transcript fetching on YouTube, "
+    "Twitter/X, Reddit, LinkedIn, V2EX, or Bilibili, prioritize using the `query_agent_reach` "
+    "tool instead of booting visual browser steps. Only fall back to full browser-use "
+    "navigation if query_agent_reach fails or if the user explicitly requests an interactive "
+    "browser action (like posting a tweet, liking a post, or submitting a form)."
 )
 
 #: Pinned to every task prompt (main + gate-round resume agents) so the LLM reaches for the
@@ -644,6 +656,17 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
     # ponytail: plaintext brief stopover in the LLM context; a sensitive_data placeholder
     # swap mid-run isn't supported by this browser-use build — switch to that when it is.
     @controller.action(
+        "Fast-path data extraction via the Agent Reach CLI — NO browser involved. Use it "
+        "FIRST for read/search/transcript work on YouTube, Twitter/X, Reddit, LinkedIn, "
+        "V2EX, Bilibili, GitHub instead of browser navigation. channel: platform name "
+        "(e.g. 'youtube'); action: the channel's action (e.g. 'search', 'read', 'subtitle'); "
+        "target: query, id or full link."
+    )
+    async def query_agent_reach_tool(channel: str, action: str, target: str) -> str:
+        # blocking subprocess — the CDP loop must not stall behind a CLI call
+        return await asyncio.to_thread(query_agent_reach, channel, action, target)
+
+    @controller.action(
         "Call this tool immediately if you reach a login/sign-in wall (username, email or "
         "password fields, SSO) and need the account's login details. The vault stores them. "
         "You MUST pass a domain_hint argument: the site's short name (e.g. 'gmail', 'amazon', "
@@ -700,7 +723,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             f"{goal}{addr_line}\n\n"
             f"{LOCATION_RULES}\n\n"
             "RULES: "
-            f"{SCROLL_RULE} {LOGIN_RULE} {DATA_EXTRACTION_RULE} {GMAIL_EXTRACTION_RULE} "
+            f"{SCROLL_RULE} {LOGIN_RULE} {DATA_EXTRACTION_RULE} {GMAIL_EXTRACTION_RULE} {FAST_PATH_RULE} "
             "If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
             "message must be exactly 'OTP_REQUIRED' (plus the site name) — NEVER guess, wait out, "
             "or bypass codes. If the site is missing an OTP field entirely, do NOT mention OTP at "
