@@ -534,3 +534,15 @@ Status: **done** — verified end to end.
 - New pinned DATA_EXTRACTION_RULE: bulk data asks must use evaluate/extract to pull the DOM
   in bulk instead of scrolling item by item (verified both actions exist in browser-use
   0.13.11's registry). --check green, gateway node --check green.
+
+## 2026-10-27 — Gmail extraction rule: evaluate beats empty extract retries
+- Task 46 logged in fine, then spent 18 steps retrying the built-in extract action on
+  Gmail's DOM (empty <result></result> every time) until the 600s cap killed the runner.
+  New pinned GMAIL_EXTRACTION_RULE in browser_driver.py: never retry an empty extract —
+  switch to evaluate with explicit JS, with a ready-to-run IIFE snippet pulling Gmail's
+  tr.zA rows (sender/subject/date/snippet, first 25). Snippet wrapped in an IIFE because
+  Runtime.evaluate rejects a bare `return` (illegal statement) — the raw snippet from the
+  bug report would not have run. Verified: node --check syntax + stub-DOM execution, and
+  one paren bug in the date selector caught by that check. Rule also caps inbox depth:
+  summarize the current view's 20-25 latest emails, never paginate 70+ older ones unless
+  the user explicitly asked. --check green.
