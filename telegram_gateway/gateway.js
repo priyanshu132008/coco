@@ -57,6 +57,24 @@ const ROUTER_PROMPT =
   "need the visual browser. " +
   "Keep replies 1-3 short sentences, casual, plain text (no markdown headers).";
 
+// Fast-path detection: a pure search/read goal on a Reach-supported platform gets a
+// STEP-1 directive stamped onto the goal — task 48 proved a soft "prioritize" rule alone
+// loses to the model's navigate-first instinct and boots the whole visual browser.
+const REACH_PLATFORM = /\b(youtube|yt|twitter|x\.com|tweets?|reddit|linkedin|bilibili|v2ex)\b/i;
+const READ_INTENT = /\b(search|read|find|summar|transcript|subtitle|trending|top|latest|hot|scrape|fetch|look ?up|watch|comments?)\b/i;
+const WRITE_INTENT = /\b(post|tweet(?!\s*(?:about|search))|comment on|like|share|upload|follow|subscribe|submit|reply|buy|order|login|log ?in|sign ?in|message|download|register)\b/i;
+
+function fastPathGoal(goal) {
+  if (REACH_PLATFORM.test(goal) && READ_INTENT.test(goal) && !WRITE_INTENT.test(goal)) {
+    return goal +
+      " STEP-1 DIRECTIVE: You MUST execute query_agent_reach in Step 1 to fetch data " +
+      "instantly (e.g. channel='youtube', action='search', target='<query>', then " +
+      "'read'/'subtitle' per item) — do NOT navigate the browser first. Only fall back " +
+      "to browser navigation if query_agent_reach fails or returns nothing usable.";
+  }
+  return goal;
+}
+
 // Stop any task still active for this chat → ledger row → spawn. Used by the router and
 // the no-router fallback alike.
 async function dispatchTask(chatId, goal) {
@@ -68,6 +86,7 @@ async function dispatchTask(chatId, goal) {
         .catch((e) => console.error("[gateway] handoff msg failed:", e.message));
     }
   }
+  goal = fastPathGoal(goal);
   const taskId = ledger.createTask(db, String(chatId), goal);
   console.log(`[gateway] task ${taskId} created for chat ${chatId}: "${goal}"`);
   spawnRunner(taskId, goal, chatId);

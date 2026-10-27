@@ -340,6 +340,7 @@ def cloak_launch_args() -> tuple[str, list[str]]:
         f"--remote-debugging-port={CDP_PORT}",  # kept for live-debugging the browser
         "--fingerprint-noise=false",  # prevents FingerprintJS tampering detection
         "--fingerprint-windows-font-metrics",  # aligns Linux font metrics to Windows
+        "--mute-audio",  # opened tabs auto-play media — the agent works silently
     ])
     return binary, build_args(
         True, extra, timezone=INDIAN_TIMEZONE, locale=INDIAN_LOCALE, headless=HEADLESS,
@@ -939,7 +940,9 @@ if __name__ == "__main__":
             f"--remote-debugging-port={CDP_PORT}",
             "--fingerprint-noise=false",
             "--fingerprint-windows-font-metrics",
+            "--mute-audio",
         ]), timezone=INDIAN_TIMEZONE, locale=INDIAN_LOCALE, headless=True)
+        assert "--mute-audio" in _args_check, _args_check
         assert "--fingerprint-timezone=Asia/Kolkata" in _args_check and "--lang=en-IN" in _args_check, _args_check
         assert any(a.startswith("--fingerprint=") for a in _args_check), _args_check
         assert extract_price("Total: ₹1,499.00") == "₹1,499.00", extract_price("Total: ₹1,499.00")
