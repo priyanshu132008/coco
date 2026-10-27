@@ -546,3 +546,20 @@ Status: **done** — verified end to end.
   one paren bug in the date selector caught by that check. Rule also caps inbox depth:
   summarize the current view's 20-25 latest emails, never paginate 70+ older ones unless
   the user explicitly asked. --check green.
+
+## 2026-10-27 — Agent Reach fast-path integration (YouTube/social read tasks)
+- Installed agent-reach 1.6.0 via `uv tool install` from the official GitHub release (NOT the
+  PyPI imposter), `agent-reach setup` enabled default channels: github, youtube, bilibili,
+  v2ex, web (ffmpeg/bili-cli tool deps auto-installed). `agent-reach channels` clean.
+  twitter/reddit/linkedin are known-but-not-added (need `agent-reach add <channel>` +
+  login on demand) — the bridge surfaces their CLI error verbatim and falls back to browser.
+- tools/agent_reach_tool.py: query_agent_reach(channel, action, target) → subprocess CLI
+  call, argv-only (no shell), 120s timeout, 12k output cap, never raises. Parses the 1.6
+  JSON envelope: ok → result/items as compact JSON; !ok → error message + hint (missing
+  channel, login/add prompts) with explicit "fall back to browser" guidance.
+  --check: offline error-path asserts + live YouTube search (verified, returns real items).
+- browser_driver.py: query_agent_reach_tool registered as a controller action
+  (asyncio.to_thread so the CDP loop never stalls); pinned FAST_PATH_RULE in the main
+  prompt (fast-path first for YouTube/Twitter/Reddit/LinkedIn/V2EX/Bilibili reads, browser
+  only on failure or interactive actions). gateway.js: same rule condensed into
+  ROUTER_PROMPT so the router never refuses platform-read goals. --check green, node --check green.
