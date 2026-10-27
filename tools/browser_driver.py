@@ -148,6 +148,23 @@ DATA_EXTRACTION_RULE = (
     "required data from the DOM in bulk, and return a concise summary."
 )
 
+#: Pinned to the main task prompt: task 46 retried the built-in extract on Gmail's DOM for 18
+#: straight steps (<result></result> every time) and burned the whole budget — never retry
+#: an empty extract; bulk-read the DOM with evaluate instead.
+GMAIL_EXTRACTION_RULE = (
+    "GMAIL & DOM EXTRACTION RULE: Never retry the `extract` action if it returns an empty "
+    "result. On Gmail or complex web apps, use the `evaluate` action with explicit "
+    "JavaScript. For Gmail inboxes, execute this snippet to extract email rows:\n"
+    "(function(){try{return JSON.stringify(Array.from(document.querySelectorAll('tr.zA'))"
+    ".slice(0, 25).map(r => ({sender: r.querySelector('.yW, span[name]')?.innerText || '', "
+    "subject: r.querySelector('.bog, .y6')?.innerText || '', date: r.querySelector('.xW')"
+    "?.innerText || '', snippet: r.querySelector('.y2')?.innerText || ''})))}catch(e)"
+    "{return 'Error: '+e.message}})()\n"
+    "Summarize the most recent 20-25 emails visible in the current inbox view — do NOT "
+    "paginate through 70+ older emails across multiple pages unless the user explicitly "
+    "asked for them."
+)
+
 #: Pinned to every task prompt (main + gate-round resume agents) so the LLM reaches for the
 #: custom vault tool instead of guessing into modals it has no data for.
 CUSTOM_TOOL_RULE = (
@@ -683,7 +700,7 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             f"{goal}{addr_line}\n\n"
             f"{LOCATION_RULES}\n\n"
             "RULES: "
-            f"{SCROLL_RULE} {LOGIN_RULE} {DATA_EXTRACTION_RULE} "
+            f"{SCROLL_RULE} {LOGIN_RULE} {DATA_EXTRACTION_RULE} {GMAIL_EXTRACTION_RULE} "
             "If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
             "message must be exactly 'OTP_REQUIRED' (plus the site name) — NEVER guess, wait out, "
             "or bypass codes. If the site is missing an OTP field entirely, do NOT mention OTP at "
