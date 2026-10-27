@@ -525,3 +525,12 @@ Status: **done** — verified end to end.
   against browser-use 0.13.11 registry: domain_hint in schema, executes fine.
 - Note: page host 'accounts.google.com' still cannot match a row literally named 'gmail'
   (no substring relation) — that gap is exactly why LOGIN_RULE forces the LLM to pass the hint.
+
+## 2026-10-27 — 10-min task cap, 50-step budget, bulk DOM extraction rule
+- 68-email inbox summary died twice over: gateway COCO_TASK_TIMEOUT default 300->600s
+  (telegram_gateway/gateway.js), and browser-use's 25-step default burned out scrolling
+  one mail at a time — COCO_BU_MAX_STEPS default 25->50 at agent.run, max_actions_per_step=10
+  added to the shared `common` Agent config (applies to main + all gate-round resumes).
+- New pinned DATA_EXTRACTION_RULE: bulk data asks must use evaluate/extract to pull the DOM
+  in bulk instead of scrolling item by item (verified both actions exist in browser-use
+  0.13.11's registry). --check green, gateway node --check green.
