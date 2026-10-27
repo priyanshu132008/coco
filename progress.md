@@ -563,3 +563,18 @@ Status: **done** — verified end to end.
   prompt (fast-path first for YouTube/Twitter/Reddit/LinkedIn/V2EX/Bilibili reads, browser
   only on failure or interactive actions). gateway.js: same rule condensed into
   ROUTER_PROMPT so the router never refuses platform-read goals. --check green, node --check green.
+
+## 2026-10-27 — mute-audio + router-enforced Agent Reach fast path
+- Task 48 (YouTube search) had two problems: opened tabs auto-played audio in the
+  background, and the agent skipped query_agent_reach entirely — the soft "prioritize"
+  FAST-PATH rule lost to the model's navigate-first instinct (13 visual steps for one
+  search). Fixes:
+- browser_driver.py: --mute-audio added to the CloakBrowser persistent_seed_args (mirrored
+  and asserted in --check) — background tabs can never produce sound.
+- gateway.js: fastPathGoal() — pure read/search/transcript goals on Reach platforms
+  (youtube/yt/twitter/x.com/tweets/reddit/linkedin/bilibili/v2ex + read-intent, no
+  write-verb) get a STEP-1 DIRECTIVE stamped into the dispatched goal: MUST execute
+  query_agent_reach in Step 1, browser only as fallback. Applied in dispatchTask before
+  createTask, so the directive also reaches the router-dispatched goals (that's the exact
+  task-48 path). Tested: task 48's goal stamps; post/like/login/buy/blinkit goals don't.
+- --check green, node --check green, all 9 detector test cases pass.
