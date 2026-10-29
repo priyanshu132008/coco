@@ -578,3 +578,13 @@ Status: **done** — verified end to end.
   createTask, so the directive also reaches the router-dispatched goals (that's the exact
   task-48 path). Tested: task 48's goal stamps; post/like/login/buy/blinkit goals don't.
 - --check green, node --check green, all 9 detector test cases pass.
+
+## 2026-10-29 — final cleanup, security audit, documentation
+- Security audit: .env / vault.db / telegram_gateway/tasks.db / .browser_profile* all
+  untracked (verified via git ls-files); tracked-file secret scan (tokens, sk- keys, Fernet
+  literals, COCO_VAULT_KEY assignments) — clean. .gitignore now pins .venv-bu/ explicitly.
+- Cleanup: removed the leftover raw-VLM debug print (agent_runner.py) and the unused
+  InvalidToken import (vault.py). Remaining prints are bracketed operational logs; agent_runner's
+  F401 re-exports are intentional (noqa'd). ast-parses green.
+- Added README.md (features, install w/ Node+Python+uv, CLI table, prompt examples); LICENSE
+  (MIT, 2026) already present.

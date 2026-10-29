@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet
 from dotenv import load_dotenv, set_key
 
 if str(Path(__file__).resolve().parent.parent) not in sys.path:

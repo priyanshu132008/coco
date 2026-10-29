@@ -127,7 +127,6 @@ def query_cloud_vlm(annotated_path: str, goal: str, model: Optional[str] = None)
     hitl = parse_decision(str(raw))
     box_id = hitl["box_id"]
     print(f"[agent] cloud vlm ({model}): box_id={box_id} payment={hitl['payment']}", file=sys.stderr)
-    print(f"[agent] vlm raw: {str(raw)[:200]!r}", file=sys.stderr)  # debugging what the model actually said
     return {"tier": "cloud_vlm", "model": model, "box_id": box_id, "payment": hitl["payment"], "price": hitl["price"],
             "is_totp_field": hitl["is_totp_field"], "domain": hitl["domain"],
             "message_to_user": hitl["message_to_user"], "type_query": hitl["type_query"], "raw": str(raw).strip()[:200]}

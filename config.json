@@ -1,4 +1,4 @@
 {
-  "provider": "openrouter",
-  "active_model": "auto"
+  "provider": "openai",
+  "active_model": "openai/nvidia/nemotron-3.5-super-vl-120b-a12b"
 }

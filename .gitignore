@@ -13,6 +13,7 @@ vault.db
 telegram_gateway/gateway.log
 
 .venv/
+.venv-bu/
 __pycache__/
 
 # local artifacts & runtime caches
