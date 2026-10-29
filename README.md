@@ -1,5 +1,7 @@
 # Coco — local AI browser agent
 
+![Coco — an agent that lives in your chat and acts on your behalf](brag-output/brag.gif)
+
 Coco is a local-first AI agent that drives your real browser end to end: you message it on
 Telegram, it plans the goal, opens Chrome, clicks and types through the actual UI, pauses for
 your approval at sensitive steps (logins, payments, TOTP fields), and reports back in chat.

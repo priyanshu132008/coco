@@ -1,0 +1,1 @@
+Give your Telegram bot the browser. It books the flight, pauses to ask you before any payment, and reads YouTube without opening a tab — passwords never leave your machine.

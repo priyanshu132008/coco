@@ -588,3 +588,11 @@ Status: **done** — verified end to end.
   F401 re-exports are intentional (noqa'd). ast-parses green.
 - Added README.md (features, install w/ Node+Python+uv, CLI table, prompt examples); LICENSE
   (MIT, 2026) already present.
+
+## 2026-10-29 — launch video (/brag-slim)
+- brag-output/: 20s @1080p30 brag.mp4 (h264+aac), brag.jpg poster (baked as frame 0),
+  share-copy.txt, brag-plan.md; frames/scripts kept in brag-output/work/.
+- Built with the machine's own Chrome (headless CDP via .venv-bu playwright), paper/ink
+  editorial style from the dashboard, Telegram chat mocks using real gateway copy;
+  audio synthesized (numpy F#m arpeggio + pips/ticks/dings), muxed with imageio-ffmpeg.
+- README now opens with brag-output/brag.gif (840px/12fps palette-optimized, 856 KB) above the intro.
