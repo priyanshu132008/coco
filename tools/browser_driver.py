@@ -3,8 +3,9 @@
 
 CloakBrowser is launched first (persistent profile, binary-level fingerprint stealth),
 then browser-use attaches over CDP. Two-phase HitL: the agent pursues the goal but is
-instructed to STOP on any payment/checkout/purchase page (report the total) and on
-OTP/2FA fields (report the domain). The driver emits gateway events, waits on the
+instructed to STOP on any payment/checkout/purchase page (report the total); OTP/2FA
+fields pause the browser thread in-place via the request_user_otp tool (no session
+kill). The driver emits gateway events, waits on the
 ledger, and on approval pays with the vault card (when the goal explicitly asked for
 it and one is stored for the domain) or a single-use Privacy card via sensitive_data.
 
@@ -57,7 +58,6 @@ from tools.vault import get_address, get_creds, has_domain, wait_for_domain  # n
 
 _ROOT = Path(__file__).resolve().parent.parent
 CHECKOUT_URL_RE = re.compile(r"checkout|payment|place[-_ ]?order|confirm[-_ ]?(purchase|order)|billing|cart", re.I)
-OTP_STOP_RE = re.compile(r"\bOTP_REQUIRED\b", re.I)
 LOCATION_STOP_RE = re.compile(r"\bLOCATION_REQUIRED\b", re.I)
 PRICE_SYM_RE = re.compile(r"[$₹]\s?[\d,]+(?:\.\d{1,2})?")
 PRICE_WORD_RE = re.compile(r"\b(?:total|pay|price)\b[:\s]*([$₹]?\s?[\d,]+(?:\.\d{1,2})?)", re.I)
@@ -138,8 +138,23 @@ LOGIN_RULE = (
     "the site you are logging into. Never give up on a login page without trying to fetch "
     "credentials. Enter the returned username/email and password exactly "
     "into their fields, never print them in a chat message, and never type them anywhere "
-    "you are not sure is the site's own login form."
+    "you are not sure is the site's own login form. "
+    "For Instagram logins, DO NOT use standard click actions for the Log in button — the "
+    "Show/Hide password toggle overlaps it and swallows the click. You MUST use the "
+    "`evaluate` action with document.querySelector('button[type=\"submit\"]').click() "
+    "to bypass overlapping DOM elements."
 )
+#: Pinned to the main task prompt: task 52 ended on 'OTP_REQUIRED Instagram' which killed
+#: the browser session and the 2FA flow with it — instead the agent pauses in-place via
+#: the request_user_otp tool (same agent, same session, page state untouched).
+OTP_RULE = (
+    "OTP RULE: If a site asks for an OTP/2FA/verification code, you MUST use the "
+    "`request_user_otp` tool to pause and wait for the user to provide it. Never guess, "
+    "bypass, or close the browser. When the tool returns the code, type it into the "
+    "verification field and submit, then continue the goal. If the site is missing an "
+    "OTP field entirely, do NOT mention OTP at all."
+)
+
 #: Pinned to the main task prompt: bulk reads must not crawl the page item by item —
 #: a 68-email inbox burned the whole step budget scrolling and reading one mail at a time.
 DATA_EXTRACTION_RULE = (
@@ -703,6 +718,37 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             "type them outside this login form."
         )
 
+    # OTP/2FA pause-and-wait: the agent stays on the page, the browser thread blocks on the
+    # ledger poll until the human replies with the code in chat. The gate-loop 'STOP and
+    # report OTP_REQUIRED' path is gone — that started a fresh agent and lost the session.
+    @controller.action(
+        "If the site asks for an OTP / 2FA / verification / login code, call this tool "
+        "immediately to pause and wait for the user to provide the code in chat. Do NOT "
+        "guess or bypass codes, and do NOT close or navigate away from the browser. "
+        "Pass the site's short name as site_name (e.g. 'instagram', 'gmail')."
+    )
+    async def request_user_otp(site_name: str = "") -> str:
+        site = (site_name or "").strip().lower() or domain or "unknown"
+        if task_id is None:
+            return "No one to ask in this offline run — report that the OTP blocked the task."
+        try:
+            emit_frame("otp", await session.take_screenshot(format="png"), task_id)
+        except Exception:
+            emit_frame("otp", next(iter(last_frame), None), task_id)
+        emit({"type": "otp_required", "task_id": task_id, "domain": site})
+        print(f"[bu] OTP requested for {site} — browser thread paused until the code arrives", file=sys.stderr, flush=True)
+        code = await asyncio.to_thread(wait_manual_code, task_id, site)
+        if not code:
+            return (
+                f"No OTP for {site} arrived in time — do not keep retrying or entering "
+                "anything; report in your final message that the task is blocked on the "
+                "verification code."
+            )
+        return (
+            f"OTP for {site} received. Type exactly this code into the verification field "
+            f"and submit: {code}. Then continue the original goal."
+        )
+
     common = dict(
         llm=llm,
         browser_session=session,
@@ -724,11 +770,8 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
             f"{goal}{addr_line}\n\n"
             f"{LOCATION_RULES}\n\n"
             "RULES: "
-            f"{SCROLL_RULE} {LOGIN_RULE} {DATA_EXTRACTION_RULE} {GMAIL_EXTRACTION_RULE} {FAST_PATH_RULE} "
-            "If the site asks for an OTP/2FA/verification code, STOP immediately: your final "
-            "message must be exactly 'OTP_REQUIRED' (plus the site name) — NEVER guess, wait out, "
-            "or bypass codes. If the site is missing an OTP field entirely, do NOT mention OTP at "
-            "all. If you reach a page for payment, checkout, or confirming a purchase, STOP there "
+            f"{SCROLL_RULE} {LOGIN_RULE} {OTP_RULE} {DATA_EXTRACTION_RULE} {GMAIL_EXTRACTION_RULE} {FAST_PATH_RULE} "
+            "If you reach a page for payment, checkout, or confirming a purchase, STOP there "
             "and report the exact total price. Never enter payment details or confirm an order on "
             "your own — the payment itself happens only after the human user approves it in chat. "
             "Everything before that point you may complete freely."
@@ -767,28 +810,6 @@ async def run_browser_task(goal: str, task_id: Optional[int] = None, max_steps: 
 
         if task_id is None:
             break  # standalone run — no ledger channels, gates collapse to text
-
-        if OTP_STOP_RE.search(result):
-            try:
-                emit_frame("otp", await session.take_screenshot(format="png"), task_id)
-            except Exception:
-                emit_frame("otp", next(iter(last_frame), None), task_id)
-            emit({"type": "otp_required", "task_id": task_id, "domain": domain_here or "unknown"})
-            code = wait_manual_code(task_id, domain_here or "unknown")
-            if not code:
-                emit({"type": "chat", "message": "No OTP received in time — gave up on this step."})
-                return 0
-            emit({"type": "chat", "message": "Code received — resuming."})
-            agent = Agent(
-                task=(
-                    f"An OTP was provided: <otp>. Find the OTP/verification field on the current page, "
-                    f"type the code into it and submit. Then continue the original goal below if it is "
-                    f"still reachable.\n{SCROLL_RULE} {LOGIN_RULE}\n{goal}\n{LOCATION_RULES}{CUSTOM_TOOL_RULE}"
-                ),
-                sensitive_data={"otp": code},
-                **common,
-            )
-            continue
 
         if LOCATION_STOP_RE.search(result):
             try:
@@ -984,8 +1005,8 @@ if __name__ == "__main__":
                 os.environ[k] = v
             for k in ("MASTER_PROXY_SERVER", "MASTER_PROXY_USERNAME", "MASTER_PROXY_PASSWORD"):
                 os.environ.pop(k, None)
-        assert OTP_STOP_RE.search("OTP_REQUIRED amazon.in"), "marker missed"
-        assert not OTP_STOP_RE.search("I found no OTP field on the page") and not OTP_STOP_RE.search("enter the verification code")
+        assert "request_user_otp" in OTP_RULE and "STOP immediately" not in OTP_RULE, OTP_RULE
+        assert "Show/Hide password" in LOGIN_RULE and "evaluate" in LOGIN_RULE
         from tools.byok import load_model_config as _lm
 
         assert _lm(), "config mapping broke"
