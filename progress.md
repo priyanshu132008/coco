@@ -596,3 +596,16 @@ Status: **done** — verified end to end.
   editorial style from the dashboard, Telegram chat mocks using real gateway copy;
   audio synthesized (numpy F#m arpeggio + pips/ticks/dings), muxed with imageio-ffmpeg.
 - README now opens with brag-output/brag.gif (840px/12fps palette-optimized, 856 KB) above the intro.
+
+## 2026-10-31 — OTP pause-in-place + Instagram login click fix (task 52 postmortem)
+- Task 52 died twice: endless click loops on the Show/Hide password toggle (overlapping
+  the Log in button), then an 'OTP_REQUIRED Instagram' exit that spawned a fresh agent —
+  re-running the whole login and killing the browser session mid-2FA.
+- New `request_user_otp(site_name)` custom tool in browser_driver.py: emits the
+  otp_required gateway event (Telegram asks for the code) and blocks the browser thread
+  on the pending_codes ledger poll until the user replies — same agent, same session.
+- Removed the old gate-loop OTP branch and OTP_STOP_RE; OTP_RULE pinned to the prompt
+  now directs at the tool (never guess/bypass/close the browser).
+- LOGIN_RULE extended: Instagram logins must use `evaluate` with
+  document.querySelector('button[type="submit"]').click() to bypass overlapping DOM.
+- --check green (plus new OTP_RULE/LOGIN_RULE asserts); pushed to main (a782f47).
