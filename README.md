@@ -1,4 +1,4 @@
-# Coco 
+# Coco - personal assistant
 
 ![Coco — an agent that lives in your chat and acts on your behalf](brag-output/brag.gif)
 
